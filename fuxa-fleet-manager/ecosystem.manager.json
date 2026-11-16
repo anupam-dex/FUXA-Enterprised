@@ -1,0 +1,15 @@
+{
+  "apps": [
+    {
+      "name": "FUXA_Enterprise_Manager",
+      "cwd": "/home/aiml/FUXA-Enterprised/fuxa-fleet-manager",
+      "script": "start_manager.sh",
+      "interpreter": "bash",
+      "autorestart": true,
+      "max_memory_restart": "500M",
+      "env": {
+        "MANAGER_PORT": "9000"
+      }
+    }
+  ]
+}
