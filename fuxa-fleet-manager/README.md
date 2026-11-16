@@ -56,7 +56,7 @@ Open your browser at:
    - The Manager automatically discovers active PM2 processes and incorporates them into the live topology.
 
 3. **Storage Server Lifecycle Control**:
-   - Master Plant Storage Servers (e.g., `P9_FUXA_Enterprise` on port `5801`) can be monitored, started, stopped, or restarted directly from the UI.
+   - Master Plant Storage Servers (e.g., `P9_Storage_Server` on port `5810`) can be monitored, started, stopped, or restarted directly from the UI.
 
 4. **Nginx Automation**:
    - Every provisioned View Server generates an isolated Nginx configuration in `nginx/conf.d/`.

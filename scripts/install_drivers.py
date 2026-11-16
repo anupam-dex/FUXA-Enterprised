@@ -48,7 +48,7 @@ def main():
     pm2_bin = shutil.which("pm2")
     if pm2_bin:
         print("[3/3] Restarting PM2 process...")
-        subprocess.run([pm2_bin, "restart", "P9_FUXA_Enterprise", "--update-env"])
+        subprocess.run([pm2_bin, "restart", "P9_Storage_Server", "--update-env"])
         print("[✓] PM2 restarted.")
     else:
         print("[i] PM2 CLI not found. Restart your FUXA server to reload plugins.")

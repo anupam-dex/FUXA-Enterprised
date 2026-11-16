@@ -4,10 +4,10 @@ FUXA Process & Port Log Inspector
 Inspect real-time logs for any FUXA port, PM2 process, or application log file.
 
 Usage:
-  python3 scripts/show_logs.py --port 5801
-  python3 scripts/show_logs.py --name P9_FUXA_Enterprise
+  python3 scripts/show_logs.py --port 5810
+  python3 scripts/show_logs.py --name P9_Storage_Server
   python3 scripts/show_logs.py --all
-  python3 scripts/show_logs.py --port 5801 --lines 50 --errors-only
+  python3 scripts/show_logs.py --port 5810 --lines 50 --errors-only
 """
 
 import os
@@ -162,8 +162,8 @@ def check_local_fuxa_logs(lines=50):
 
 def main():
     parser = argparse.ArgumentParser(description="FUXA Process & Port Log Inspector")
-    parser.add_argument("--port", type=str, help="Target port number (e.g. 5801, 9610)")
-    parser.add_argument("--name", type=str, help="Target PM2 process name (e.g. P9_FUXA_Enterprise)")
+    parser.add_argument("--port", type=str, help="Target port number (e.g. 5810, 9610)")
+    parser.add_argument("--name", type=str, help="Target PM2 process name (e.g. P9_Storage_Server)")
     parser.add_argument("--all", action="store_true", help="Display logs for all running PM2 processes")
     parser.add_argument("--lines", type=int, default=50, help="Number of lines to tail (default: 50)")
     parser.add_argument("--errors-only", action="store_true", help="Only show stderr error output")

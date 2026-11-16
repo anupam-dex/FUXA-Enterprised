@@ -254,7 +254,7 @@ def sync_unregistered():
 def get_logs(target: str, lines: int = 100):
     """
     Returns recent stdout and stderr logs for a PM2 process by port or name.
-    Example: /api/logs/5801 or /api/logs/P9_FUXA_Enterprise
+    Example: /api/logs/5810 or /api/logs/P9_Storage_Server
     """
     return pm2_adapter.get_process_logs(target, lines=lines)
 

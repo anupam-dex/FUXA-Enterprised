@@ -23,7 +23,7 @@ try { require('nodes7'); console.log('  ✓ nodes7 loaded successfully'); } catc
 
 echo "[3/3] Reloading FUXA in PM2..."
 if command -v pm2 &> /dev/null; then
-    pm2 restart P9_FUXA_Enterprise --update-env 2>/dev/null || pm2 restart all --update-env 2>/dev/null || true
+    pm2 restart P9_Storage_Server --update-env 2>/dev/null || pm2 restart P9_FUXA_Enterprise --update-env 2>/dev/null || pm2 restart all --update-env 2>/dev/null || true
     echo "[✓] PM2 process reloaded."
 else
     echo "[!] PM2 not found on PATH. Please restart FUXA manually."
