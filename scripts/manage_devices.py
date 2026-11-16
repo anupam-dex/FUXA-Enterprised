@@ -24,34 +24,59 @@ import argparse
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUPS_DIR = os.path.join(ROOT_DIR, "locations", "backups")
 
-def find_database(custom_path=None, plant=None, port=None):
-    if custom_path and os.path.exists(custom_path):
-        return custom_path
+def is_valid_project_db(file_path):
+    if not file_path or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return False
+    try:
+        conn = sqlite3.connect(file_path)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='devices';")
+        has_table = cur.fetchone() is not None
+        conn.close()
+        return has_table
+    except Exception:
+        return False
 
+def find_database(custom_path=None, plant=None, port=None):
+    if custom_path:
+        if is_valid_project_db(custom_path):
+            return os.path.abspath(custom_path)
+        if os.path.exists(custom_path):
+            return os.path.abspath(custom_path)
+
+    # 1. Target by Plant
     if plant is not None:
         p_candidates = [
             os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "_appdata", "project.fuxap.db"),
+            os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "_appdata", "_app.db"),
             os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "project.fuxap.db"),
         ]
         for p in p_candidates:
-            if os.path.exists(p):
+            if is_valid_project_db(p):
                 return os.path.abspath(p)
 
+    # 2. Target by Port
     if port is not None:
-        port_candidates = glob.glob(os.path.join(ROOT_DIR, "locations", "**", f"*{port}*", "**", "project.fuxap.db"), recursive=True)
-        for p in port_candidates:
-            if os.path.exists(p):
+        for p in glob.glob(os.path.join(ROOT_DIR, "locations", "**", f"*{port}*", "**", "*.db"), recursive=True):
+            if is_valid_project_db(p):
                 return os.path.abspath(p)
 
+    # 3. Standard locations
     candidates = [
         os.path.join(ROOT_DIR, "locations", "storage", "plant_9", "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "locations", "storage", "plant_9", "_appdata", "_app.db"),
         os.path.join(ROOT_DIR, "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "_appdata", "_app.db"),
         os.path.join(ROOT_DIR, "server", "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "server", "_appdata", "_app.db"),
         os.path.join(os.getcwd(), "_appdata", "project.fuxap.db"),
-        os.path.join(os.getcwd(), "server", "_appdata", "project.fuxap.db"),
+        os.path.join(os.getcwd(), "_appdata", "_app.db"),
     ]
-    loc_pattern = os.path.join(ROOT_DIR, "locations", "**", "project.fuxap.db")
-    candidates.extend(glob.glob(loc_pattern, recursive=True))
+    candidates.extend(glob.glob(os.path.join(ROOT_DIR, "locations", "**", "*.db"), recursive=True))
+
+    for p in candidates:
+        if is_valid_project_db(p):
+            return os.path.abspath(p)
 
     for p in candidates:
         if os.path.exists(p) and os.path.getsize(p) > 0:
