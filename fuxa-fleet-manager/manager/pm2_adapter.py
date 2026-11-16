@@ -139,20 +139,42 @@ class PM2Adapter:
             p_name = str(p.get("name", ""))
             p_id = str(p.get("pm_id", ""))
             pm2_env = p.get("pm2_env", {})
-            args = pm2_env.get("args", [])
+            raw_args = pm2_env.get("args", [])
+            args_str = " ".join(raw_args) if isinstance(raw_args, list) else str(raw_args)
 
-            # Check if port matches argument list (e.g., -p 5801)
+            # Match criteria:
+            # 1. Exact name match (case-insensitive)
+            # 2. Exact pm_id match
+            # 3. Port number in args (e.g. -p 5801)
+            # 4. Port number in process name (e.g. fuxa_p9_d6_l1_9610)
+            # 5. Target 5801 matches Plant 9 storage name
             port_match = False
-            for idx, a in enumerate(args):
-                if a == "-p" and idx + 1 < len(args) and str(args[idx + 1]) == target_str:
+            if target_str.isdigit():
+                if f"-p {target_str}" in args_str or f"-p={target_str}" in args_str:
                     port_match = True
-                    break
+                elif f"_{target_str}" in p_name or f"-{target_str}" in p_name:
+                    port_match = True
+                elif target_str == "5801" and ("P9" in p_name.upper() or "STORAGE" in p_name.upper()):
+                    port_match = True
 
             if p_name.lower() == target_str.lower() or p_id == target_str or port_match:
                 matched = p
                 break
 
         if not matched:
+            # Check local fuxa.log files as fallback
+            fuxa_log = os.path.join(os.getcwd(), "_logs", "fuxa.log")
+            if os.path.exists(fuxa_log):
+                return {
+                    "found": True,
+                    "name": "Local FUXA Log",
+                    "pm_id": "-",
+                    "status": "active",
+                    "out_log_path": fuxa_log,
+                    "err_log_path": "",
+                    "stdout": self._tail_file(fuxa_log, lines),
+                    "stderr": []
+                }
             return {
                 "found": False,
                 "error": f"No PM2 process found matching target '{target}'. Available: {[p.get('name') for p in processes]}"
@@ -162,23 +184,35 @@ class PM2Adapter:
         out_path = pm2_env.get("pm_out_log_path")
         err_path = pm2_env.get("pm_err_log_path")
 
-        def tail_file(file_path: str, max_lines: int) -> list:
-            if not file_path or not os.path.exists(file_path):
-                return [f"Log file not found at: {file_path}"]
-            try:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    all_lines = f.readlines()
-                    return all_lines[-max_lines:]
-            except Exception as e:
-                return [f"Error reading {file_path}: {e}"]
+        # Fallback to standard ~/.pm2/logs path if env paths missing
+        if not out_path or not os.path.exists(out_path):
+            home = os.path.expanduser("~")
+            candidate = os.path.join(home, ".pm2", "logs", f"{matched.get('name')}-out.log")
+            if os.path.exists(candidate):
+                out_path = candidate
+        if not err_path or not os.path.exists(err_path):
+            home = os.path.expanduser("~")
+            candidate = os.path.join(home, ".pm2", "logs", f"{matched.get('name')}-error.log")
+            if os.path.exists(candidate):
+                err_path = candidate
 
         return {
             "found": True,
             "name": matched.get("name"),
             "pm_id": matched.get("pm_id"),
             "status": pm2_env.get("status", "unknown"),
-            "out_log_path": out_path,
-            "err_log_path": err_path,
-            "stdout": tail_file(out_path, lines),
-            "stderr": tail_file(err_path, lines)
+            "out_log_path": out_path or "N/A",
+            "err_log_path": err_path or "N/A",
+            "stdout": self._tail_file(out_path, lines),
+            "stderr": self._tail_file(err_path, lines)
         }
+
+    def _tail_file(self, file_path: str, max_lines: int) -> list:
+        if not file_path or not os.path.exists(file_path):
+            return [f"Log file not found at: {file_path}\n"]
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                all_lines = f.readlines()
+                return all_lines[-max_lines:]
+        except Exception as e:
+            return [f"Error reading {file_path}: {e}\n"]
