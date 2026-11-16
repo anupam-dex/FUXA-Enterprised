@@ -14,6 +14,8 @@ import logging
 logger = logging.getLogger("PortEngine")
 
 REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "registry.json")
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MASTER_REGISTRY_FILE = os.path.join(ROOT_DIR, "fuxa-fleet-registry.json")
 
 class PortEngine:
     def __init__(self, registry_path=REGISTRY_FILE, pm2_adapter=None):
@@ -28,6 +30,21 @@ class PortEngine:
                     return json.load(f)
             except Exception as e:
                 logger.error(f"Error loading registry: {e}")
+        # Fallback to master registry if available
+        if os.path.exists(MASTER_REGISTRY_FILE):
+            try:
+                with open(MASTER_REGISTRY_FILE, "r", encoding="utf-8") as f:
+                    master = json.load(f)
+                    return {
+                        "plants": master.get("storage_servers", {}),
+                        "divisions": self._default_registry()["divisions"],
+                        "instances": master.get("view_servers", {})
+                    }
+            except Exception:
+                pass
+        return self._default_registry()
+
+    def _default_registry(self):
         return {
             "plants": {
                 "1": {"name": "Plant 1 - Foundry & Powerhouse", "storage_port": 5100, "storage_pm2_name": "P1_Storage_Server"},
@@ -53,6 +70,13 @@ class PortEngine:
         try:
             with open(self.registry_path, "w", encoding="utf-8") as f:
                 json.dump(self.registry, f, indent=2)
+            # Also keep fuxa-fleet-registry.json up to date
+            try:
+                sync_script = os.path.join(ROOT_DIR, "scripts", "sync_registry.py")
+                if os.path.exists(sync_script):
+                    subprocess.Popen([sys.executable, sync_script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
         except Exception as e:
             logger.error(f"Error saving registry: {e}")
 

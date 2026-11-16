@@ -1,0 +1,83 @@
+{
+  "title": "FUXA Enterprise Fleet Master Registry",
+  "last_updated": "2026-11-16T22:21:25.251220",
+  "fleet_manager": {
+    "name": "FUXA_Enterprise_Manager",
+    "port": 9000,
+    "status": "STANDALONE",
+    "url": "http://localhost:9000"
+  },
+  "storage_servers": {
+    "1": {
+      "plant_id": 1,
+      "name": "Plant 1 - Foundry & Powerhouse",
+      "port": 5100,
+      "pm2_name": "P1_Storage_Server",
+      "role": "storage",
+      "work_dir": "locations/storage/plant_1",
+      "database_path": "locations/storage/plant_1/_appdata/_app.db",
+      "database_exists": false,
+      "status": "NOT_REGISTERED",
+      "uptime": 0,
+      "memory_mb": 0.0
+    },
+    "2": {
+      "plant_id": 2,
+      "name": "Plant 2 - Stamping & Press",
+      "port": 5200,
+      "pm2_name": "P2_Storage_Server",
+      "role": "storage",
+      "work_dir": "locations/storage/plant_2",
+      "database_path": "locations/storage/plant_2/_appdata/_app.db",
+      "database_exists": false,
+      "status": "NOT_REGISTERED",
+      "uptime": 0,
+      "memory_mb": 0.0
+    },
+    "3": {
+      "plant_id": 3,
+      "name": "Plant 3 - Body & Assembly",
+      "port": 5300,
+      "pm2_name": "P3_Storage_Server",
+      "role": "storage",
+      "work_dir": "locations/storage/plant_3",
+      "database_path": "locations/storage/plant_3/_appdata/_app.db",
+      "database_exists": false,
+      "status": "NOT_REGISTERED",
+      "uptime": 0,
+      "memory_mb": 0.0
+    },
+    "4": {
+      "plant_id": 4,
+      "name": "Plant 4 - Powertrain & Engine",
+      "port": 5400,
+      "pm2_name": "P4_Storage_Server",
+      "role": "storage",
+      "work_dir": "locations/storage/plant_4",
+      "database_path": "locations/storage/plant_4/_appdata/_app.db",
+      "database_exists": false,
+      "status": "NOT_REGISTERED",
+      "uptime": 0,
+      "memory_mb": 0.0
+    },
+    "9": {
+      "plant_id": 9,
+      "name": "Plant 9 - Paintshop Complex",
+      "port": 5810,
+      "pm2_name": "P9_Storage_Server",
+      "role": "storage",
+      "work_dir": "locations/storage/plant_9",
+      "database_path": "locations/storage/plant_9/_appdata/_app.db",
+      "database_exists": false,
+      "status": "NOT_REGISTERED",
+      "uptime": 0,
+      "memory_mb": 0.0
+    }
+  },
+  "view_servers": {},
+  "backups": {
+    "backup_dir": "locations/backups",
+    "total_backups": 0,
+    "latest_backups": []
+  }
+}
