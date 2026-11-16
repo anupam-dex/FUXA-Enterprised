@@ -22,7 +22,7 @@
     },
     "9": {
       "name": "Plant 9 - Paintshop Complex",
-      "storage_port": 5810,
+      "storage_port": 5801,
       "storage_pm2_name": "P9_Storage_Server"
     }
   },

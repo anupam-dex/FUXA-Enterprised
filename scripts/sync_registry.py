@@ -31,7 +31,7 @@ DEFAULT_PLANTS = {
     "2": {"name": "Plant 2 - Stamping & Press", "storage_port": 5200, "storage_pm2_name": "P2_Storage_Server"},
     "3": {"name": "Plant 3 - Body & Assembly", "storage_port": 5300, "storage_pm2_name": "P3_Storage_Server"},
     "4": {"name": "Plant 4 - Powertrain & Engine", "storage_port": 5400, "storage_pm2_name": "P4_Storage_Server"},
-    "9": {"name": "Plant 9 - Paintshop Complex", "storage_port": 5810, "storage_pm2_name": "P9_Storage_Server"}
+    "9": {"name": "Plant 9 - Paintshop Complex", "storage_port": 5801, "storage_pm2_name": "P9_Storage_Server"}
 }
 
 def get_pm2_processes():

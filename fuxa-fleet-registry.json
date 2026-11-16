@@ -1,6 +1,6 @@
 {
   "title": "FUXA Enterprise Fleet Master Registry",
-  "last_updated": "2026-11-16T22:21:25.251220",
+  "last_updated": "2026-11-16T22:22:38.042499",
   "fleet_manager": {
     "name": "FUXA_Enterprise_Manager",
     "port": 9000,
@@ -63,7 +63,7 @@
     "9": {
       "plant_id": 9,
       "name": "Plant 9 - Paintshop Complex",
-      "port": 5810,
+      "port": 5801,
       "pm2_name": "P9_Storage_Server",
       "role": "storage",
       "work_dir": "locations/storage/plant_9",
