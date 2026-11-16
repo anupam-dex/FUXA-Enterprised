@@ -30,12 +30,15 @@ var startTime = new Date();
 var knownOpts = {
     "help": Boolean,
     "port": Number,
-    "userDir": [path]
+    "userDir": [path],
+    "role": String,
+    "disablePlugins": Boolean
 };
 var shortHands = {
     "?": ["--help"],
     "p": ["--port"],
-    "u": ["--userDir"]
+    "u": ["--userDir"],
+    "r": ["--role"]
 };
 
 nopt.invalidHandler = function (k, v, t) {
@@ -46,12 +49,14 @@ var parsedArgs = nopt(knownOpts, shortHands, process.argv, 2);
 
 if (parsedArgs.help) {
     console.log("FUXA v" + FUXA.version());
-    console.log("Usage: fuxa [-?] [--port PORT] [--userDir DIR]");
+    console.log("Usage: fuxa [-?] [--port PORT] [--userDir DIR] [--role storage|view] [--disablePlugins]");
     console.log("");
     console.log("Options:");
-    console.log("  -p, --port     PORT  port to listen on");
-    console.log("  -u, --userDir  DIR   use specified user directory");
-    console.log("  -?, --help           show this help");
+    console.log("  -p, --port           PORT  port to listen on");
+    console.log("  -u, --userDir        DIR   use specified user directory");
+    console.log("  -r, --role           ROLE  role of the server (storage | view, default: storage)");
+    console.log("      --disablePlugins       prevent plugin installation on this instance");
+    console.log("  -?, --help                 show this help");
     process.exit();
 }
 
@@ -224,7 +229,27 @@ if (!fs.existsSync(settings.logDir)) {
     fs.mkdirSync(settings.logDir);
 }
 
+// Configure Server Role and Plugin Installation Policies
+if (parsedArgs.role) {
+    settings.role = parsedArgs.role.toLowerCase();
+} else if (process.env.FUXA_ROLE) {
+    settings.role = process.env.FUXA_ROLE.toLowerCase();
+} else {
+    settings.role = settings.role || 'storage';
+}
+
+if (parsedArgs.disablePlugins !== undefined) {
+    settings.disablePlugins = Boolean(parsedArgs.disablePlugins);
+} else if (process.env.FUXA_DISABLE_PLUGINS !== undefined) {
+    settings.disablePlugins = process.env.FUXA_DISABLE_PLUGINS === 'true';
+} else if (settings.role === 'view') {
+    settings.disablePlugins = true;
+} else {
+    settings.disablePlugins = settings.disablePlugins || false;
+}
+
 logger.init(settings);
+logger.info(`Server role: [${settings.role.toUpperCase()}] | Plugin installation: ${settings.disablePlugins ? 'DISABLED (View Mode)' : 'ENABLED (Storage Mode)'}`);
 const version = FUXA.version();
 if (version.indexOf('beta') > 0) {
     logger.warn('FUXA V.' + version);

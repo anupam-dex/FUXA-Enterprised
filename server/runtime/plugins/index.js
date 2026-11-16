@@ -151,6 +151,9 @@ async function addPlugin(plugin, options) {
     const needsRuntimeInstall = normalized.pkg || normalized.dynamicPackage || !isInstalled;
 
     if (needsRuntimeInstall && !isInstalled) {
+        if (settings && (settings.role === 'view' || settings.disablePlugins)) {
+            throw new Error('Plugin installation is disabled on View Servers. Master Storage Servers manage plugins.');
+        }
         normalized.current = await manager.installPackage(normalized.name, normalized.version);
         normalized.pkg = true;
     } else if (current) {
@@ -174,6 +177,10 @@ async function addPlugin(plugin, options) {
 function removePlugin(plugin) {
     return new Promise(async function (resolve, reject) {
         try {
+            if (settings && (settings.role === 'view' || settings.disablePlugins)) {
+                reject(new Error('Plugin removal is disabled on View Servers.'));
+                return;
+            }
             const normalized = _normalizePlugin(plugin);
             if (!normalized) {
                 reject(new Error('Invalid plugin'));

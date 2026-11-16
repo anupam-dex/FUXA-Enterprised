@@ -51,9 +51,10 @@ class PM2Adapter:
                 }
         return {"exists": False, "status": "NOT_REGISTERED"}
 
-    def start_instance(self, name: str, script_path: str, port: int, user_dir: str, subpath: str = "") -> dict:
+    def start_instance(self, name: str, script_path: str, port: int, user_dir: str, subpath: str = "", role: str = "view") -> dict:
         """
         Registers and starts a FUXA instance in PM2 with its dedicated port and userDir.
+        Sets role ('storage' or 'view') and restricts plugins accordingly.
         Then persists with 'pm2 save'.
         """
         if not self.pm2_bin:
@@ -63,12 +64,17 @@ class PM2Adapter:
             self.pm2_bin, "start", script_path,
             "--name", name,
             "--restart-delay", "1000",
-            "--", "-p", str(port), "-u", user_dir
+            "--", "-p", str(port), "-u", user_dir, "--role", role
         ]
+        if role == "view":
+            cmd.append("--disablePlugins")
 
         env = os.environ.copy()
         if subpath:
             env["BASE_PATH"] = subpath
+        env["FUXA_ROLE"] = role
+        if role == "view":
+            env["FUXA_DISABLE_PLUGINS"] = "true"
         env["NODE_OPTIONS"] = "--max-old-space-size=4096"
 
         try:
@@ -76,7 +82,7 @@ class PM2Adapter:
             res = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=15)
             if res.returncode == 0:
                 self.save()
-                return {"success": True, "message": f"Started {name} in PM2 on port {port}"}
+                return {"success": True, "message": f"Started {name} in PM2 on port {port} (role: {role})"}
             return {"success": False, "error": res.stderr or res.stdout}
         except Exception as e:
             logger.error(f"Failed to start PM2 process {name}: {e}")

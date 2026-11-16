@@ -188,14 +188,55 @@ function _resolveLegacyPackageJson(packageDir, packageName) {
     return fs.existsSync(packageJson) ? packageJson : null;
 }
 
+function _resolveNpmBin() {
+    const isWindows = process.platform === 'win32';
+    const nodeDir = path.dirname(process.execPath);
+
+    if (isWindows) {
+        const siblingNpm = path.join(nodeDir, 'npm.cmd');
+        if (fs.existsSync(siblingNpm)) {
+            return { command: siblingNpm, argsPrefix: [] };
+        }
+        return { command: (process.env.ComSpec || 'cmd.exe'), argsPrefix: ['/d', '/s', '/c', 'npm.cmd'] };
+    }
+
+    // On Linux / macOS: check directory of active node executable first (matches current Node.js runtime)
+    const siblingNpm = path.join(nodeDir, 'npm');
+    if (fs.existsSync(siblingNpm)) {
+        return { command: siblingNpm, argsPrefix: [] };
+    }
+
+    // Check standard global paths
+    for (const candidate of ['/usr/local/bin/npm', '/usr/bin/npm', '/bin/npm']) {
+        if (fs.existsSync(candidate)) {
+            return { command: candidate, argsPrefix: [] };
+        }
+    }
+
+    return { command: 'npm', argsPrefix: [] };
+}
+
 function _runNpmCommand(cwd, args, logger) {
     const isWindows = process.platform === 'win32';
-    const command = isWindows ? (process.env.ComSpec || 'cmd.exe') : 'npm';
-    const commandArgs = isWindows ? ['/d', '/s', '/c', 'npm.cmd', ...args] : args;
+    const nodeDir = path.dirname(process.execPath);
+    const { command, argsPrefix } = _resolveNpmBin();
+    const commandArgs = [...argsPrefix, ...args];
+
+    const currentPath = process.env.PATH || '';
+    const pathSep = isWindows ? ';' : ':';
+    const extendedPath = currentPath.includes(nodeDir) ? currentPath : `${nodeDir}${pathSep}${currentPath}`;
+
+    if (!fs.existsSync(cwd)) {
+        fs.mkdirSync(cwd, { recursive: true });
+    }
+
     return new Promise((resolve, reject) => {
         const child = spawn(command, commandArgs, {
             cwd,
-            env: Object.assign({}, process.env, { npm_config_loglevel: 'warn' }),
+            env: Object.assign({}, process.env, {
+                PATH: extendedPath,
+                npm_config_loglevel: 'warn'
+            }),
             windowsHide: true,
         });
         let stderr = '';
@@ -207,7 +248,12 @@ function _runNpmCommand(cwd, args, logger) {
         child.stderr.on('data', (data) => {
             stderr += data.toString();
         });
-        child.on('error', reject);
+        child.on('error', (err) => {
+            if (logger) {
+                logger.error(`[plugin-runtime] spawn ${command} error: ${err.message}`);
+            }
+            reject(err);
+        });
         child.on('close', (code) => {
             if (code === 0) {
                 resolve(stdout);

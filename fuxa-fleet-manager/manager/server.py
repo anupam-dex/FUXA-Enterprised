@@ -114,13 +114,14 @@ def create_view_server(req: CreateViewRequest):
     )
     nginx_reloaded, nginx_msg = reload_nginx()
 
-    # 4. Start instance autonomously in PM2
+    # 4. Start instance autonomously in PM2 (role="view" disables plugin installation)
     pm2_res = pm2_adapter.start_instance(
         name=instance_id,
         script_path=FUXA_SERVER_PATH,
         port=port,
         user_dir=instance_work_dir,
-        subpath=subpath
+        subpath=subpath,
+        role="view"
     )
 
     # 5. Persist in registry
@@ -165,13 +166,14 @@ def start_view_server(instance_id: str):
     if pm2_status.get("exists"):
         res = pm2_adapter.restart_instance(pm2_name)
     else:
-        # Register fresh into PM2
+        # Register fresh into PM2 as View Server
         res = pm2_adapter.start_instance(
             name=pm2_name,
             script_path=FUXA_SERVER_PATH,
             port=inst["port"],
             user_dir=inst["work_dir"],
-            subpath=inst.get("subpath", "")
+            subpath=inst.get("subpath", ""),
+            role="view"
         )
 
     inst["status"] = "RUNNING" if res.get("success") else "STOPPED"
@@ -225,7 +227,8 @@ def start_storage_server(plant_id: int):
             name=pm2_name,
             script_path=FUXA_SERVER_PATH,
             port=port,
-            user_dir=storage_work_dir
+            user_dir=storage_work_dir,
+            role="storage"
         )
 
     return {"success": res.get("success"), "pm2_name": pm2_name, "port": port}
