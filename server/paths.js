@@ -36,7 +36,7 @@ function ensureDirs(dirPath) {
   if (fs.existsSync(dirPath)) {
     return;
   }
-  fs.mkdirSync(dirPath);
+  fs.mkdirSync(dirPath, { recursive: true });
 }
 
 exports.getAppDataPath = getAppDataPath;

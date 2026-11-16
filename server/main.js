@@ -79,7 +79,7 @@ if (parsedArgs.env) {
 }
 
 if (!fs.existsSync(workDir)) {
-    fs.mkdirSync(workDir);
+    fs.mkdirSync(workDir, { recursive: true });
 }
 
 // Read app settings
@@ -226,7 +226,7 @@ if (!settings.logDir) {
     settings.logDir = path.resolve(rootDir, '_logs');
 }
 if (!fs.existsSync(settings.logDir)) {
-    fs.mkdirSync(settings.logDir);
+    fs.mkdirSync(settings.logDir, { recursive: true });
 }
 
 // Configure Server Role and Plugin Installation Policies
@@ -259,33 +259,33 @@ if (version.indexOf('beta') > 0) {
 
 // Check storage Database dir
 if (!fs.existsSync(settings.dbDir)) {
-    fs.mkdirSync(settings.dbDir);
+    fs.mkdirSync(settings.dbDir, { recursive: true });
 }
 // Check package folder
 if (!fs.existsSync(settings.packageDir)) {
-    fs.mkdirSync(settings.packageDir);
+    fs.mkdirSync(settings.packageDir, { recursive: true });
 }
 // Check reports folder
 if (!fs.existsSync(settings.reportsDir)) {
-    fs.mkdirSync(settings.reportsDir);
+    fs.mkdirSync(settings.reportsDir, { recursive: true });
 }
 // Check upload file folder
 settings.httpUploadFileStatic = 'resources';
 settings.uploadFileDir = path.resolve(workDir, settings.uploadFileDir);
 if (!fs.existsSync(settings.uploadFileDir)) {
-    fs.mkdirSync(settings.uploadFileDir);
+    fs.mkdirSync(settings.uploadFileDir, { recursive: true });
 }
 // Check images resources folder
 if (!fs.existsSync(settings.imagesFileDir)) {
-    fs.mkdirSync(settings.imagesFileDir);
+    fs.mkdirSync(settings.imagesFileDir, { recursive: true });
 }
 // Check widgets resources folder
 if (!fs.existsSync(settings.widgetsFileDir)) {
-    fs.mkdirSync(settings.widgetsFileDir);
+    fs.mkdirSync(settings.widgetsFileDir, { recursive: true });
 }
 // Check webcam shots  folder
 if (!fs.existsSync(settings.webcamSnapShotsDir)) {
-    fs.mkdirSync(settings.webcamSnapShotsDir);
+    fs.mkdirSync(settings.webcamSnapShotsDir, { recursive: true });
 }
 
 // Server settings
