@@ -214,6 +214,67 @@ body {
 }
 
 /* Plant Grid Matrix */
+.plant-selector-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    background: #161b22;
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.plant-selector-bar {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.plant-tab {
+    background: #21262d;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+}
+
+.plant-tab:hover {
+    background: #30363d;
+    color: #f0f6fc;
+}
+
+.plant-tab.active {
+    background: #1f6feb;
+    color: #ffffff;
+    border-color: #388bfd;
+    box-shadow: 0 0 10px rgba(31, 111, 235, 0.4);
+}
+
+.plant-tab-badge {
+    background: rgba(0, 0, 0, 0.35);
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.plant-tab.active .plant-tab-badge {
+    background: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+}
+
 .plant-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
@@ -228,6 +289,10 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
+}
+
+.plant-card.single-view {
+    grid-column: 1 / -1;
 }
 
 .plant-card-header {

@@ -1,5 +1,8 @@
 // FUXA Enterprise Fleet Manager Frontend Logic
 
+let selectedPlantFilter = localStorage.getItem('fuxa_selected_plant') || '9';
+let cachedMatrix = [];
+
 function getServerHost() {
     if (window.location.hostname && window.location.hostname !== '') {
         return window.location.hostname;
@@ -11,6 +14,7 @@ async function loadMatrix() {
     try {
         const res = await fetch('/api/matrix');
         const data = await res.json();
+        cachedMatrix = data.matrix || [];
         
         // Update PM2 pill
         const pm2Status = document.getElementById('pm2-status');
@@ -23,9 +27,10 @@ async function loadMatrix() {
             pm2Pill.querySelector('.dot').className = 'dot';
         }
 
-        renderStorageGrid(data.matrix);
-        renderPlantGrid(data.matrix);
-        document.getElementById('stat-plants').textContent = data.matrix.length;
+        renderStorageGrid(cachedMatrix);
+        renderPlantSelector(cachedMatrix);
+        renderPlantGrid(cachedMatrix);
+        document.getElementById('stat-plants').textContent = cachedMatrix.length;
     } catch (err) {
         console.error("Failed to load matrix:", err);
     }
@@ -79,17 +84,83 @@ function renderStorageGrid(matrix) {
     });
 }
 
+function renderPlantSelector(matrix) {
+    const container = document.getElementById('plant-selector-bar');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const totalInstances = matrix.reduce((acc, p) => acc + (p.instances ? p.instances.length : 0), 0);
+
+    // "All Plants" Tab
+    const allTab = document.createElement('button');
+    allTab.className = `plant-tab ${selectedPlantFilter === 'all' ? 'active' : ''}`;
+    allTab.innerHTML = `🌐 All Plants <span class="plant-tab-badge">${totalInstances}</span>`;
+    allTab.onclick = () => selectPlantFilter('all');
+    container.appendChild(allTab);
+
+    // Tab per Plant
+    matrix.forEach(plant => {
+        const pTab = document.createElement('button');
+        const isActive = String(selectedPlantFilter) === String(plant.plant_id);
+        pTab.className = `plant-tab ${isActive ? 'active' : ''}`;
+        const count = plant.instances ? plant.instances.length : 0;
+        const shortName = plant.name.split(' - ')[0] || `Plant ${plant.plant_id}`;
+        pTab.innerHTML = `🏭 ${shortName} <span class="plant-tab-badge">${count}</span>`;
+        pTab.onclick = () => selectPlantFilter(String(plant.plant_id));
+        container.appendChild(pTab);
+    });
+
+    const summaryEl = document.getElementById('plant-quick-summary');
+    if (summaryEl) {
+        if (selectedPlantFilter === 'all') {
+            summaryEl.textContent = `Showing all ${matrix.length} plants (${totalInstances} view ports)`;
+        } else {
+            const p = matrix.find(x => String(x.plant_id) === String(selectedPlantFilter));
+            if (p) {
+                summaryEl.textContent = `Plant ${p.plant_id} | Storage: :${p.storage_port} | Views: ${p.instances ? p.instances.length : 0} ports`;
+            }
+        }
+    }
+}
+
+function selectPlantFilter(plantId) {
+    selectedPlantFilter = plantId;
+    localStorage.setItem('fuxa_selected_plant', plantId);
+    renderPlantSelector(cachedMatrix);
+    renderPlantGrid(cachedMatrix);
+}
+
 function renderPlantGrid(matrix) {
     const grid = document.getElementById('plant-grid');
     grid.innerHTML = '';
 
-    matrix.forEach(plant => {
+    const isSingle = selectedPlantFilter !== 'all';
+    const displayPlants = isSingle 
+        ? matrix.filter(p => String(p.plant_id) === String(selectedPlantFilter))
+        : matrix;
+
+    if (displayPlants.length === 0) {
+        grid.innerHTML = `
+            <div class="empty-state" style="grid-column: 1 / -1; padding: 40px; text-align: center; background: #0d1117; border: 1px dashed var(--border-color); border-radius: 10px;">
+                <p style="color: var(--text-muted); margin-bottom: 12px; font-size: 0.95rem;">No view servers deployed for this plant yet.</p>
+                <button class="btn btn-primary" onclick="openCreateModal(${selectedPlantFilter})">+ Provision First View Server</button>
+            </div>
+        `;
+        return;
+    }
+
+    displayPlants.forEach(plant => {
         const card = document.createElement('div');
-        card.className = 'plant-card';
+        card.className = `plant-card ${isSingle ? 'single-view' : ''}`;
 
         let instancesHtml = '';
-        if (plant.instances.length === 0) {
-            instancesHtml = `<div style="color: var(--text-muted); font-size: 0.85rem; padding: 12px 0;">No active view servers deployed for this plant.</div>`;
+        if (!plant.instances || plant.instances.length === 0) {
+            instancesHtml = `
+                <div style="color: var(--text-muted); font-size: 0.85rem; padding: 24px; text-align: center; background: #161b22; border-radius: 8px;">
+                    <div style="margin-bottom: 12px;">No active view servers deployed for ${plant.name}.</div>
+                    <button class="btn btn-primary btn-sm" onclick="openCreateModal(${plant.plant_id})">+ Add View Server for Plant ${plant.plant_id}</button>
+                </div>
+            `;
         } else {
             instancesHtml = plant.instances.map(inst => {
                 const isOnline = inst.is_live;
@@ -105,12 +176,12 @@ function renderPlantGrid(matrix) {
                                 ${statusBadge}
                             </div>
                             <div class="instance-sub">
-                                Port: <strong>${inst.port}</strong> | Subpath: <code>${inst.subpath}</code> | RAM: ${inst.memory_mb || 0} MB | CPU: ${inst.cpu || 0}%
+                                Port: <strong style="color: var(--accent-cyan); font-size: 0.85rem;">:${inst.port}</strong> | Subpath: <code>${inst.subpath}</code> | RAM: ${inst.memory_mb || 0} MB | CPU: ${inst.cpu || 0}%
                             </div>
                         </div>
                         <div class="instance-actions">
-                            <a href="http://${getServerHost()}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm">Editor</a>
-                            <a href="http://${getServerHost()}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm">View</a>
+                            <a href="http://${getServerHost()}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm" title="Open HMI Screen Drawing Editor">Editor</a>
+                            <a href="http://${getServerHost()}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator Live View">View</a>
                             <button onclick="openLogs('${inst.port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
                             ${isOnline 
                                 ? `<button onclick="stopInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Stop in PM2">&#9632;</button>` 
@@ -126,12 +197,15 @@ function renderPlantGrid(matrix) {
         card.innerHTML = `
             <div class="plant-card-header">
                 <div>
-                    <div class="plant-title">${plant.name}</div>
-                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
-                        Storage Endpoint: :${plant.storage_port} (OPC-UA: opc.tcp://127.0.0.1:4840)
+                    <div class="plant-title" style="font-size: 1.15rem;">${plant.name}</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; font-family: var(--font-mono);">
+                        Master Storage: <strong style="color: var(--accent-storage);">:${plant.storage_port}</strong> | Target Bridge: <code>opc.tcp://127.0.0.1:4840</code> | Deployed Views: <strong>${plant.instances ? plant.instances.length : 0}</strong>
                     </div>
                 </div>
-                <span class="badge badge-storage">Plant ${plant.plant_id}</span>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <span class="badge badge-storage">Plant ${plant.plant_id}</span>
+                    <button class="btn btn-primary btn-sm" onclick="openCreateModal(${plant.plant_id})">+ Add View Port</button>
+                </div>
             </div>
             <div class="instances-list">
                 ${instancesHtml}
@@ -141,8 +215,14 @@ function renderPlantGrid(matrix) {
     });
 }
 
-function openCreateModal() {
+function openCreateModal(preselectedPlantId) {
     document.getElementById('create-modal').classList.add('show');
+    if (preselectedPlantId) {
+        const plantSelect = document.getElementById('sel-plant');
+        if (plantSelect) {
+            plantSelect.value = String(preselectedPlantId);
+        }
+    }
     updatePortPreview();
 }
 

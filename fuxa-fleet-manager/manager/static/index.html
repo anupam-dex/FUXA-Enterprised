@@ -59,11 +59,21 @@
                 <div>
                     <h2>🖥️ Deployed HMI View Servers (PM2 Managed)</h2>
                     <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
-                        Lightweight operator dashboards consuming live tags via the Central Storage Server. Zero PLC load.
+                        Select a plant below to view its dedicated line view ports and launch screen editors.
                     </p>
                 </div>
                 <div class="legend">
                     <span class="legend-item"><span class="badge badge-view">VIEW</span> Operator SCADA</span>
+                </div>
+            </div>
+
+            <!-- Plant Selector Bar -->
+            <div class="plant-selector-wrapper">
+                <div id="plant-selector-bar" class="plant-selector-bar">
+                    <!-- Dynamically populated plant selector tabs -->
+                </div>
+                <div id="plant-quick-summary" style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">
+                    <!-- Filter status summary -->
                 </div>
             </div>
 
