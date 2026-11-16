@@ -71,9 +71,12 @@ function renderTopology(matrix) {
                 </div>
                 <span class="views-count-pill ${pCount > 0 ? 'has-active' : ''}">${pCount} Active</span>
             </div>
-            <div class="plant-strip-bottom">
+            <div class="plant-strip-bottom" style="display: flex; gap: 6px; align-items: center;">
                 ${storageChipHtml}
-                <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono);">InfluxDB Master</span>
+                <button onclick="event.stopPropagation(); openStorageImportModal('${pId}')" title="Import & Deduplicate Devices into Plant ${pId} Storage Server" style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">
+                    📥 Import Devices
+                </button>
+                <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono); margin-left: auto;">InfluxDB Master</span>
             </div>
         `;
         plantStrip.appendChild(card);
@@ -738,6 +741,15 @@ function setMigrateDestination(dest) {
         if (optRestart) optRestart.style.display = 'none';
         if (btn) btn.innerHTML = '🚀 Start 1-Click Dashboard Migration';
         if (dropSubtext) dropSubtext.textContent = 'Supported formats: FUXA project export (.json), FUXA package (.fuxap)';
+    }
+}
+
+function openStorageImportModal(plantId) {
+    openMigrateModal();
+    setMigrateDestination('storage');
+    const plantSel = document.getElementById('migrate-storage-plant');
+    if (plantSel) {
+        plantSel.value = String(plantId);
     }
 }
 
