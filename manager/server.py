@@ -610,6 +610,65 @@ async def api_migrate_project(request: Request):
         logger.error(f"[MIGRATE-ERROR] Migration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/storage/{plant_id}/import-devices")
+async def api_import_storage_devices(plant_id: int, request: Request):
+    """
+    Imports and deduplicates physical devices & tags from one or multiple
+    uploaded project.json / .fuxap files into the Plant's Central Storage Server.
+    Ignores views, layouts, and ensures zero device duplication.
+    """
+    scripts_dir = os.path.join(BASE_DIR, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from import_devices_to_storage import import_devices
+
+    content_type = request.headers.get("content-type", "")
+    sources = []
+    dry_run = False
+    restart = True
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        dry_run = str(form.get("dry_run", "false")).lower() in ("true", "1", "yes")
+        restart = str(form.get("restart", "true")).lower() in ("true", "1", "yes")
+
+        file_list = form.getlist("files") or form.getlist("file")
+        for f in file_list:
+            if hasattr(f, "read"):
+                b = await f.read()
+                if b:
+                    try:
+                        sources.append(json.loads(b.decode("utf-8")))
+                    except Exception as e:
+                        raise HTTPException(status_code=400, detail=f"Invalid JSON in uploaded file: {e}")
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        dry_run = body.get("dry_run", False)
+        restart = body.get("restart", True)
+        if "projects" in body and isinstance(body["projects"], list):
+            sources = body["projects"]
+        elif "project" in body:
+            sources = [body["project"]]
+
+    if not sources:
+        raise HTTPException(status_code=400, detail="Please upload at least one project.json or .fuxap file.")
+
+    try:
+        report = import_devices(
+            source_files=sources,
+            plant_id=int(plant_id),
+            dry_run=dry_run,
+            create_backup=True,
+            restart_storage=restart and not dry_run
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        logger.error(f"[STORAGE-IMPORT-ERROR] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/instances/{instance_id}/sync-tags")
 def sync_instance_tags(instance_id: str):
     """Syncs the latest storage server tags into the view server's database and restarts if running"""

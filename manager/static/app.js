@@ -655,6 +655,43 @@ async function deleteBackup(filename) {
 let selectedMigrateFile = null;
 let migrateSourceMode = 'file'; // 'file' or 'url'
 
+let selectedMigrateFile = null;
+let selectedMigrateFiles = [];
+let migrateSourceMode = 'file'; // 'file' or 'url'
+let migrateDestination = 'storage'; // 'storage' or 'view'
+
+function setMigrateDestination(dest) {
+    migrateDestination = dest;
+    const tabStorage = document.getElementById('tab-dest-storage');
+    const tabView = document.getElementById('tab-dest-view');
+    const boxStorage = document.getElementById('dest-box-storage');
+    const boxView = document.getElementById('dest-box-view');
+    const optKeep = document.getElementById('opt-row-keep');
+    const optRestart = document.getElementById('opt-row-restart');
+    const btn = document.getElementById('btn-execute-migrate');
+    const dropSubtext = document.getElementById('dropzone-subtext');
+
+    if (dest === 'storage') {
+        if (tabStorage) tabStorage.className = 'btn btn-sm btn-primary';
+        if (tabView) tabView.className = 'btn btn-sm btn-secondary';
+        if (boxStorage) boxStorage.style.display = 'block';
+        if (boxView) boxView.style.display = 'none';
+        if (optKeep) optKeep.style.display = 'none';
+        if (optRestart) optRestart.style.display = 'flex';
+        if (btn) btn.innerHTML = '🚀 Import & Deduplicate Devices to Storage';
+        if (dropSubtext) dropSubtext.textContent = 'Select one or multiple project files. Duplicate devices will be automatically merged.';
+    } else {
+        if (tabStorage) tabStorage.className = 'btn btn-sm btn-secondary';
+        if (tabView) tabView.className = 'btn btn-sm btn-primary';
+        if (boxStorage) boxStorage.style.display = 'none';
+        if (boxView) boxView.style.display = 'block';
+        if (optKeep) optKeep.style.display = 'flex';
+        if (optRestart) optRestart.style.display = 'none';
+        if (btn) btn.innerHTML = '🚀 Start 1-Click Dashboard Migration';
+        if (dropSubtext) dropSubtext.textContent = 'Supported formats: FUXA project export (.json), FUXA package (.fuxap)';
+    }
+}
+
 function openMigrateModal(preselectedInstanceId = null) {
     const modal = document.getElementById('migrate-modal');
     if (!modal) return;
@@ -681,15 +718,17 @@ function openMigrateModal(preselectedInstanceId = null) {
 
     // Reset file / form state
     selectedMigrateFile = null;
+    selectedMigrateFiles = [];
     const fileInput = document.getElementById('migrate-file-input');
     if (fileInput) fileInput.value = '';
     const dropText = document.getElementById('dropzone-text');
-    if (dropText) dropText.innerHTML = 'Click to select or drop <span style="color: #fbbf24;">project.json</span> or <span style="color: #38bdf8;">.fuxap</span> file';
+    if (dropText) dropText.innerHTML = 'Click to select or drop <span style="color: #fbbf24;">project.json</span> or <span style="color: #38bdf8;">.fuxap</span> files (Multiple supported)';
     const resBox = document.getElementById('migrate-results');
     if (resBox) {
         resBox.style.display = 'none';
         resBox.innerHTML = '';
     }
+    setMigrateDestination('storage');
     setMigrateSourceMode('file');
     setupDropzone();
     modal.classList.add('show');
@@ -723,12 +762,17 @@ function setMigrateSourceMode(mode) {
 }
 
 function handleMigrateFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-    selectedMigrateFile = file;
+    const files = Array.from(event.target.files || []);
+    if (!files.length) return;
+    selectedMigrateFiles = files;
+    selectedMigrateFile = files[0];
     const dropText = document.getElementById('dropzone-text');
     if (dropText) {
-        dropText.innerHTML = `✅ Selected: <strong style="color: #4ade80;">${file.name}</strong> (${(file.size / 1024).toFixed(1)} KB)`;
+        if (files.length === 1) {
+            dropText.innerHTML = `✅ Selected: <strong style="color: #4ade80;">${files[0].name}</strong> (${(files[0].size / 1024).toFixed(1)} KB)`;
+        } else {
+            dropText.innerHTML = `✅ Selected <strong style="color: #4ade80;">${files.length} project files</strong> (${files.map(f => f.name).slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''})`;
+        }
     }
 }
 
@@ -754,12 +798,20 @@ function setupDropzone() {
         });
     });
     dropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
         const dt = e.dataTransfer;
         if (dt && dt.files && dt.files.length > 0) {
-            selectedMigrateFile = dt.files[0];
+            const files = Array.from(dt.files);
+            selectedMigrateFiles = files;
+            selectedMigrateFile = files[0];
             const dropText = document.getElementById('dropzone-text');
             if (dropText) {
-                dropText.innerHTML = `✅ Selected: <strong style="color: #4ade80;">${selectedMigrateFile.name}</strong> (${(selectedMigrateFile.size / 1024).toFixed(1)} KB)`;
+                if (files.length === 1) {
+                    dropText.innerHTML = `✅ Selected: <strong style="color: #4ade80;">${files[0].name}</strong> (${(files[0].size / 1024).toFixed(1)} KB)`;
+                } else {
+                    dropText.innerHTML = `✅ Selected <strong style="color: #4ade80;">${files.length} project files</strong> (${files.map(f => f.name).slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''})`;
+                }
             }
         }
     });
@@ -768,10 +820,94 @@ function setupDropzone() {
 async function executeProjectMigration() {
     const btn = document.getElementById('btn-execute-migrate');
     const resBox = document.getElementById('migrate-results');
+    const dryRun = document.getElementById('migrate-opt-dryrun')?.checked ?? false;
+
+    // A. STORAGE SERVER MODE (Extract & Deduplicate Devices Only)
+    if (migrateDestination === 'storage') {
+        const plantId = document.getElementById('migrate-storage-plant')?.value || '9';
+        const restart = document.getElementById('migrate-opt-restart')?.checked ?? true;
+
+        if (selectedMigrateFiles.length === 0 && !selectedMigrateFile) {
+            alert('Please select or drop at least one project.json or .fuxap file.');
+            return;
+        }
+
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Deduplicating & Importing Devices...';
+        resBox.style.display = 'block';
+        resBox.style.background = '#0f172a';
+        resBox.style.border = '1px solid #334155';
+        resBox.innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 12px;">Auditing devices, computing hardware signatures, and merging tags...</div>';
+
+        try {
+            const formData = new FormData();
+            formData.append('dry_run', dryRun ? 'true' : 'false');
+            formData.append('restart', restart ? 'true' : 'false');
+            selectedMigrateFiles.forEach(f => formData.append('files', f));
+
+            const resp = await fetch(`/api/storage/${plantId}/import-devices`, {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await resp.json();
+            if (!resp.ok) {
+                throw new Error(data.detail || 'Device import failed');
+            }
+
+            const rep = data.report || {};
+            resBox.style.background = '#064e3b';
+            resBox.style.border = '1px solid #10b981';
+            resBox.innerHTML = `
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                    <strong style="color: #34d399; font-size: 0.95rem;">
+                        ${dryRun ? '🔍 Dry Run Simulation Complete' : '🎉 Devices Successfully Imported to Storage Server!'}
+                    </strong>
+                    <span style="background: rgba(16, 185, 129, 0.2); color: #6ee7b7; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">
+                        Plant ${plantId} Storage
+                    </span>
+                </div>
+                <div style="grid-template-columns: repeat(4, 1fr); display: grid; gap: 6px; margin: 10px 0; background: rgba(0,0,0,0.25); padding: 8px; border-radius: 6px; text-align: center;">
+                    <div><div style="font-size: 1.1rem; font-weight: 800; color: #f8fafc;">${rep.total_incoming_devices || 0}</div><div style="font-size: 0.7rem; color: #94a3b8;">Scanned Devices</div></div>
+                    <div><div style="font-size: 1.1rem; font-weight: 800; color: #4ade80;">+${rep.new_devices_added || 0}</div><div style="font-size: 0.7rem; color: #94a3b8;">New Devices</div></div>
+                    <div><div style="font-size: 1.1rem; font-weight: 800; color: #fbbf24;">${rep.duplicate_devices_merged || 0}</div><div style="font-size: 0.7rem; color: #94a3b8;">Merged Duplicates</div></div>
+                    <div><div style="font-size: 1.1rem; font-weight: 800; color: #38bdf8;">+${rep.new_tags_added || 0}</div><div style="font-size: 0.7rem; color: #94a3b8;">Tags Imported</div></div>
+                </div>
+                <div style="max-height: 140px; overflow-y: auto; background: #020617; border-radius: 4px; padding: 6px 10px; font-size: 0.75rem; font-family: monospace; color: #cbd5e1; margin-top: 8px;">
+                    ${(rep.devices || []).map(d => `
+                        <div style="padding: 2px 0; border-bottom: 1px solid #1e293b;">
+                            <span style="color: ${d.action === 'CREATED' ? '#4ade80' : '#facc15'}; font-weight: 700;">[${d.action}]</span>
+                            <strong>${d.name}</strong> (${d.type}): ${d.action === 'MERGED' ? `Merged into '${d.target_device}' (+${d.tags_added} tags, ${d.tags_duplicate} dups)` : `+${d.tags_added} tags`}
+                        </div>
+                    `).join('')}
+                </div>
+                ${!dryRun ? `
+                    <div style="margin-top: 10px; text-align: right;">
+                        <button class="btn btn-sm btn-secondary" onclick="syncAllTags()" style="font-size: 0.75rem;">
+                            🔄 Sync Tags to View Servers Now
+                        </button>
+                    </div>
+                ` : ''}
+            `;
+            if (!dryRun) loadMatrix();
+        } catch (err) {
+            resBox.style.background = '#450a0a';
+            resBox.style.border = '1px solid #ef4444';
+            resBox.innerHTML = `
+                <strong style="color: #f87171;">Import Failed:</strong>
+                <div style="color: #fca5a5; font-size: 0.8rem; margin-top: 4px;">${err.message}</div>
+            `;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '🚀 Import & Deduplicate Devices to Storage';
+        }
+        return;
+    }
+
+    // B. VIEW SERVER MODE (Extract Dashboards & Views Only)
     const targetSelect = document.getElementById('migrate-target-select');
     const target = targetSelect ? targetSelect.value : '9610';
     const keepExisting = document.getElementById('migrate-opt-keep')?.checked ?? true;
-    const dryRun = document.getElementById('migrate-opt-dryrun')?.checked ?? false;
 
     if (migrateSourceMode === 'file' && !selectedMigrateFile) {
         alert('Please select or drop a project.json or .fuxap file first.');
@@ -784,7 +920,7 @@ async function executeProjectMigration() {
     }
 
     btn.disabled = true;
-    btn.innerHTML = '⏳ Migrating & Remapping...';
+    btn.innerHTML = '⏳ Migrating & Remapping Views...';
     resBox.style.display = 'block';
     resBox.style.background = '#0f172a';
     resBox.style.border = '1px solid #334155';
@@ -875,7 +1011,7 @@ async function executeProjectMigration() {
         `;
     } finally {
         btn.disabled = false;
-        btn.innerHTML = '🚀 Start 1-Click Migration';
+        btn.innerHTML = '🚀 Start 1-Click Dashboard Migration';
     }
 }
 
