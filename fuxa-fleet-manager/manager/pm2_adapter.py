@@ -125,3 +125,60 @@ class PM2Adapter:
                 subprocess.run([self.pm2_bin, "save"], capture_output=True, text=True, timeout=10)
             except Exception:
                 pass
+
+    def get_process_logs(self, target: str, lines: int = 100) -> dict:
+        """
+        Retrieves recent stdout and stderr logs for a PM2 process,
+        matched by process name, pm_id, or port number.
+        """
+        processes = self.list_processes()
+        matched = None
+        target_str = str(target).strip()
+
+        for p in processes:
+            p_name = str(p.get("name", ""))
+            p_id = str(p.get("pm_id", ""))
+            pm2_env = p.get("pm2_env", {})
+            args = pm2_env.get("args", [])
+
+            # Check if port matches argument list (e.g., -p 5801)
+            port_match = False
+            for idx, a in enumerate(args):
+                if a == "-p" and idx + 1 < len(args) and str(args[idx + 1]) == target_str:
+                    port_match = True
+                    break
+
+            if p_name.lower() == target_str.lower() or p_id == target_str or port_match:
+                matched = p
+                break
+
+        if not matched:
+            return {
+                "found": False,
+                "error": f"No PM2 process found matching target '{target}'. Available: {[p.get('name') for p in processes]}"
+            }
+
+        pm2_env = matched.get("pm2_env", {})
+        out_path = pm2_env.get("pm_out_log_path")
+        err_path = pm2_env.get("pm_err_log_path")
+
+        def tail_file(file_path: str, max_lines: int) -> list:
+            if not file_path or not os.path.exists(file_path):
+                return [f"Log file not found at: {file_path}"]
+            try:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                    all_lines = f.readlines()
+                    return all_lines[-max_lines:]
+            except Exception as e:
+                return [f"Error reading {file_path}: {e}"]
+
+        return {
+            "found": True,
+            "name": matched.get("name"),
+            "pm_id": matched.get("pm_id"),
+            "status": pm2_env.get("status", "unknown"),
+            "out_log_path": out_path,
+            "err_log_path": err_path,
+            "stdout": tail_file(out_path, lines),
+            "stderr": tail_file(err_path, lines)
+        }

@@ -1,5 +1,12 @@
 // FUXA Enterprise Fleet Manager Frontend Logic
 
+function getServerHost() {
+    if (window.location.hostname && window.location.hostname !== '') {
+        return window.location.hostname;
+    }
+    return '127.0.0.1';
+}
+
 async function loadMatrix() {
     try {
         const res = await fetch('/api/matrix');
@@ -57,7 +64,7 @@ function renderStorageGrid(matrix) {
                 </div>
                 <div class="stat-item">
                     <span>Web Console</span>
-                    <a href="http://${window.location.hostname}:${plant.storage_port}" target="_blank" class="link-open">&#8599; :${plant.storage_port}</a>
+                    <a href="http://${getServerHost()}:${plant.storage_port}" target="_blank" class="link-open">&#8599; :${plant.storage_port}</a>
                 </div>
             </div>
             <div class="storage-card-actions">
@@ -65,6 +72,7 @@ function renderStorageGrid(matrix) {
                     ? `<button onclick="stopStorage(${plant.plant_id})" class="btn btn-secondary btn-sm" style="flex:1;">Stop</button>`
                     : `<button onclick="startStorage(${plant.plant_id})" class="btn btn-primary btn-sm" style="flex:1;">Start in PM2</button>`
                 }
+                <button onclick="openLogs('${plant.storage_port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
             </div>
         `;
         grid.appendChild(card);
@@ -101,8 +109,9 @@ function renderPlantGrid(matrix) {
                             </div>
                         </div>
                         <div class="instance-actions">
-                            <a href="http://${window.location.hostname}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm">Editor</a>
-                            <a href="http://${window.location.hostname}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm">View</a>
+                            <a href="http://${getServerHost()}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm">Editor</a>
+                            <a href="http://${getServerHost()}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm">View</a>
+                            <button onclick="openLogs('${inst.port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
                             ${isOnline 
                                 ? `<button onclick="stopInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Stop in PM2">&#9632;</button>` 
                                 : `<button onclick="startInstance('${inst.id}')" class="btn btn-primary btn-sm" title="Start in PM2">&#9654;</button>`
@@ -250,3 +259,72 @@ function showAlert(html, type) {
 // Initial load & poll every 5s
 loadMatrix();
 setInterval(loadMatrix, 5000);
+
+// Log Viewer Modal Functions
+let currentLogTarget = null;
+let currentLogData = null;
+let currentLogTab = 'out';
+
+async function openLogs(target) {
+    currentLogTarget = target;
+    const modal = document.getElementById('log-modal');
+    modal.classList.add('show');
+    document.getElementById('log-modal-title').textContent = `PM2 Logs for Target: ${target}`;
+    await refreshCurrentLogs();
+}
+
+async function refreshCurrentLogs() {
+    if (!currentLogTarget) return;
+    const outputEl = document.getElementById('log-output');
+    outputEl.textContent = 'Fetching logs from PM2...';
+    try {
+        const res = await fetch(`/api/logs/${encodeURIComponent(currentLogTarget)}?lines=100`);
+        const data = await res.json();
+        currentLogData = data;
+
+        if (!data.found) {
+            outputEl.textContent = data.error || 'No logs found.';
+            return;
+        }
+
+        renderLogContent();
+    } catch (err) {
+        outputEl.textContent = `Failed to fetch logs: ${err.message}`;
+    }
+}
+
+function switchLogTab(tab) {
+    currentLogTab = tab;
+    const btnOut = document.getElementById('btn-tab-out');
+    const btnErr = document.getElementById('btn-tab-err');
+    if (tab === 'out') {
+        btnOut.className = 'btn btn-sm btn-primary';
+        btnErr.className = 'btn btn-sm btn-secondary';
+    } else {
+        btnOut.className = 'btn btn-sm btn-secondary';
+        btnErr.className = 'btn btn-sm btn-primary';
+    }
+    renderLogContent();
+}
+
+function renderLogContent() {
+    const outputEl = document.getElementById('log-output');
+    if (!currentLogData) return;
+
+    const lines = currentLogTab === 'out' ? currentLogData.stdout : currentLogData.stderr;
+    const filePath = currentLogTab === 'out' ? currentLogData.out_log_path : currentLogData.err_log_path;
+
+    if (!lines || lines.length === 0) {
+        outputEl.textContent = `[Log file: ${filePath}]\n(No log entries recorded yet)`;
+    } else {
+        outputEl.textContent = `[Log file: ${filePath}]\n\n` + lines.join('');
+    }
+    outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+function closeLogModal() {
+    const modal = document.getElementById('log-modal');
+    modal.classList.remove('show');
+    currentLogTarget = null;
+    currentLogData = null;
+}

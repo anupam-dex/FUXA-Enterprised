@@ -250,6 +250,14 @@ def sync_unregistered():
     port_engine.auto_sync_instances(VIEWS_DIR)
     return {"success": True, "matrix": port_engine.get_port_matrix()}
 
+@app.get("/api/logs/{target}")
+def get_logs(target: str, lines: int = 100):
+    """
+    Returns recent stdout and stderr logs for a PM2 process by port or name.
+    Example: /api/logs/5801 or /api/logs/P9_FUXA_Enterprise
+    """
+    return pm2_adapter.get_process_logs(target, lines=lines)
+
 # Static files for the Manager UI
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)

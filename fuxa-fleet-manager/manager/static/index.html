@@ -148,6 +148,29 @@
         </div>
     </div>
 
+    <!-- Log Viewer Modal -->
+    <div id="log-modal" class="modal-backdrop">
+        <div class="modal-box" style="max-width: 850px; width: 90%;">
+            <div class="modal-header">
+                <h3 id="log-modal-title">Process Logs</h3>
+                <button class="btn-close" onclick="closeLogModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px;">
+                <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-sm btn-primary" id="btn-tab-out" onclick="switchLogTab('out')">Standard Output (stdout)</button>
+                        <button class="btn btn-sm btn-secondary" id="btn-tab-err" onclick="switchLogTab('err')">Errors (stderr)</button>
+                    </div>
+                    <button class="btn btn-sm btn-secondary" onclick="refreshCurrentLogs()">&#x21bb; Refresh</button>
+                </div>
+                <pre id="log-output" style="background: #0d1117; color: #58a6ff; font-family: var(--font-mono); font-size: 0.8rem; padding: 16px; border-radius: 6px; height: 380px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; border: 1px solid #30363d;"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeLogModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/app.js"></script>
 </body>
 </html>
