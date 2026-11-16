@@ -240,6 +240,7 @@ function init(_server, _runtime) {
 
 function getPublicSettings(settings) {
     const tosend = getSanitizedSettings(settings);
+    delete tosend.secretCode;
     if (tosend.smtp) {
         delete tosend.smtp.host;
         delete tosend.smtp.port;
@@ -256,7 +257,8 @@ function getPublicSettings(settings) {
 
 function getSanitizedSettings(settings) {
     const tosend = JSON.parse(JSON.stringify(settings));
-    delete tosend.secretCode;
+    // Keep secretCode (API Key / Auth Secret) visible for administrators
+    // delete tosend.secretCode;
     if (tosend.smtp) {
         delete tosend.smtp.password;
     }

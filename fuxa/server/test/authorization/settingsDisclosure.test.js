@@ -42,7 +42,7 @@ describe('Security - settings disclosure', () => {
         const adminSettings = apiIndex._getSanitizedSettings(settings);
         const publicSettings = apiIndex._getPublicSettings(settings);
 
-        expect(adminSettings).to.not.have.property('secretCode');
+        expect(adminSettings).to.have.property('secretCode');
         expect(adminSettings.smtp).to.not.have.property('password');
         expect(adminSettings.daqstore).to.have.property('credentials');
 

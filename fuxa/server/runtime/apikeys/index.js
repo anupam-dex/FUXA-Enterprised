@@ -61,6 +61,7 @@ function setApiKeys(query) {
     return new Promise(function (resolve, reject) {
         if (query && query.length) {
             apiKeysStorage.setApiKeys(query).then(() => {
+                _loadApiKeys();
                 resolve();
             }).catch(function (err) {
                 logger.error(`apikeys.apiKeysStorage-set-ApiKey failed! ${err}`);
@@ -79,6 +80,7 @@ function removeApiKeys(apiKeys) {
     return new Promise(function (resolve, reject) {
         if (apiKeys && apiKeys.length) {
             apiKeysStorage.removeApiKeys(apiKeys).then(() => {
+                _loadApiKeys();
                 resolve();
             }).catch(function (err) {
                 logger.error(`apikeys.apiKeysStorage-remove-ApiKeys failed! ${err}`);
@@ -101,10 +103,12 @@ function getApiKeysMapCache(key) {
 
 function _loadApiKeys() {
     getApiKeys().then(apiKeys => {
+        apiKeysMap.clear();
         for (var id = 0; id < apiKeys.length; id++) {
             try {
-                // const info = JSON.parse(apiKeys[id].info);
-                // usersMap.set(users[id].username, { info: info, groups: users[id].groups });
+                if (apiKeys[id] && apiKeys[id].key) {
+                    apiKeysMap.set(apiKeys[id].key, apiKeys[id]);
+                }
             } catch (e) {
                 logger.error(`apikeys.apiKeysStorage-apiKeys failed! ${e}`);
             }

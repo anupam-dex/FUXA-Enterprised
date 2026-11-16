@@ -766,6 +766,66 @@ async def api_migrate_project(request: Request):
         logger.error(f"[MIGRATE-ERROR] Migration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/instances/{instance_id}/apikeys")
+def get_instance_apikeys(instance_id: str):
+    """
+    Returns the active API Key, JWT secretCode, and any generated Web API keys
+    for the specified instance so the user can easily view and copy them.
+    """
+    instances = port_engine.get_all_instances()
+    inst = instances.get(instance_id) or {}
+    port = inst.get("port")
+    work_dir = inst.get("work_dir") or (os.path.join(INSTANCES_DIR, f"port_{port}") if port else os.path.join(INSTANCES_DIR, instance_id))
+
+    secret_code = None
+    settings_paths = [
+        os.path.join(work_dir, "_appdata", "mysettings.json"),
+        os.path.join(work_dir, "mysettings.json"),
+        os.path.join(BASE_DIR, "fuxa", "server", "_appdata", "mysettings.json")
+    ]
+    for sp in settings_paths:
+        if os.path.exists(sp):
+            try:
+                with open(sp, "r") as f:
+                    s_data = json.load(f)
+                    if s_data.get("secretCode"):
+                        secret_code = s_data["secretCode"]
+                        break
+            except Exception:
+                pass
+
+    db_keys = []
+    apikey_db_paths = [
+        os.path.join(work_dir, "_appdata", "apikeys.fuxap.db"),
+        os.path.join(work_dir, "apikeys.fuxap.db")
+    ]
+    for dbp in apikey_db_paths:
+        if os.path.exists(dbp):
+            try:
+                conn = sqlite3.connect(dbp, timeout=3.0)
+                cur = conn.cursor()
+                cur.execute("SELECT name, value FROM apikeys;")
+                for r_name, r_val in cur.fetchall():
+                    try:
+                        kobj = json.loads(r_val)
+                        db_keys.append(kobj)
+                    except Exception:
+                        pass
+                conn.close()
+                break
+            except Exception:
+                pass
+
+    primary_key = db_keys[0].get("key") if db_keys else (secret_code or "fuxa-secret-jwt-key")
+
+    return {
+        "instance_id": instance_id,
+        "port": port,
+        "secret_code": secret_code or "fuxa-secret-jwt-key",
+        "api_keys": db_keys,
+        "primary_api_key": primary_key
+    }
+
 @app.post("/api/storage/{plant_id}/import-devices")
 async def api_import_storage_devices(plant_id: int, request: Request):
     """

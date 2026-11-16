@@ -193,6 +193,9 @@ function renderInstancesList() {
             <div class="col-routing">
                 <div class="port-badge" title="Internal backend process port" style="${!isLive ? 'border-color: #ef4444; color: #fca5a5;' : ''}">Port: ${inst.port}</div>
                 <div class="subpath-badge">${inst.subpath}</div>
+                <button onclick="copyInstanceApiKey('${inst.id}')" class="subpath-badge" style="background: rgba(147, 51, 234, 0.15); border: 1px solid rgba(147, 51, 234, 0.4); color: #c084fc; cursor: pointer; display: flex; align-items: center; gap: 4px; margin-top: 4px;" title="Click to view & copy API Key / Secret">
+                    <span>🔑</span> API Key
+                </button>
             </div>
 
             <!-- Col 3: Data Source -->
@@ -1244,6 +1247,18 @@ function copyDiagnosticLogs() {
     }).catch(() => {
         alert('Failed to copy logs.');
     });
+}
+
+async function copyInstanceApiKey(instanceId) {
+    try {
+        const resp = await fetch(`/api/instances/${instanceId}/apikeys`);
+        const data = await resp.json();
+        const key = data.primary_api_key || data.secret_code || 'fuxa-secret-jwt-key';
+        await navigator.clipboard.writeText(key);
+        alert(`🔑 API Key Copied to Clipboard!\n\nKey: ${key}\nInstance: ${instanceId}`);
+    } catch (e) {
+        alert(`Failed to fetch API key: ${e.message}`);
+    }
 }
 
 function scrollToFirstFault() {
