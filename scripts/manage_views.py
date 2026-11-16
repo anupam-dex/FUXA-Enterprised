@@ -14,27 +14,93 @@ import os
 import sys
 import glob
 import json
+import shutil
 import sqlite3
+import datetime
 import argparse
 
-def find_database(custom_path=None):
-    if custom_path and os.path.exists(custom_path):
-        return custom_path
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BACKUPS_DIR = os.path.join(ROOT_DIR, "locations", "backups")
 
-    # Candidate locations in order of priority
+def is_valid_project_db(file_path):
+    if not file_path or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return False
+    try:
+        conn = sqlite3.connect(file_path)
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='views';")
+        has_table = cur.fetchone() is not None
+        conn.close()
+        return has_table
+    except Exception:
+        return False
+
+def count_views_in_db(file_path):
+    if not file_path or not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        return 0
+    try:
+        conn = sqlite3.connect(file_path)
+        cur = conn.cursor()
+        cur.execute("SELECT count(*) FROM views;")
+        row = cur.fetchone()
+        count = row[0] if row else 0
+        conn.close()
+        return count
+    except Exception:
+        return 0
+
+def backup_database(db_path):
+    if not db_path or not os.path.exists(db_path):
+        return
+    os.makedirs(BACKUPS_DIR, exist_ok=True)
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = os.path.join(BACKUPS_DIR, f"project_views_backup_{ts}.fuxap.db")
+    shutil.copy2(db_path, dest)
+    print(f"[🛡️] Created pre-modification backup: {dest}")
+
+def find_database(custom_path=None, plant=None, port=None):
+    if custom_path:
+        if is_valid_project_db(custom_path):
+            return os.path.abspath(custom_path)
+        if os.path.exists(custom_path):
+            return os.path.abspath(custom_path)
+
+    # 1. Target by Plant
+    if plant is not None:
+        p_candidates = [
+            os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "_appdata", "project.fuxap.db"),
+            os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "_appdata", "_app.db"),
+            os.path.join(ROOT_DIR, "locations", "storage", f"plant_{plant}", "project.fuxap.db"),
+        ]
+        for p in p_candidates:
+            if is_valid_project_db(p) and count_views_in_db(p) > 0:
+                return os.path.abspath(p)
+        for p in p_candidates:
+            if is_valid_project_db(p):
+                return os.path.abspath(p)
+
+    # 2. Target by Port
+    if port is not None:
+        for p in glob.glob(os.path.join(ROOT_DIR, "locations", "**", f"*{port}*", "**", "*.db"), recursive=True):
+            if is_valid_project_db(p) and count_views_in_db(p) > 0:
+                return os.path.abspath(p)
+
+    # 3. Standard locations
     candidates = [
-        os.path.join(os.getcwd(), "_appdata", "project.fuxap.db"),
-        os.path.join(os.getcwd(), "server", "_appdata", "project.fuxap.db"),
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "_appdata", "project.fuxap.db"),
-        os.path.join(os.path.dirname(os.path.dirname(__file__)), "server", "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "locations", "storage", "plant_9", "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "_appdata", "project.fuxap.db"),
+        os.path.join(ROOT_DIR, "server", "_appdata", "project.fuxap.db"),
     ]
-    # Check locations/ storage or views
-    loc_pattern = os.path.join(os.getcwd(), "locations", "**", "project.fuxap.db")
-    candidates.extend(glob.glob(loc_pattern, recursive=True))
+    candidates.extend(glob.glob(os.path.join(ROOT_DIR, "locations", "**", "*.db"), recursive=True))
 
     for p in candidates:
-        if os.path.exists(p):
+        if is_valid_project_db(p) and count_views_in_db(p) > 0:
             return os.path.abspath(p)
+
+    for p in candidates:
+        if is_valid_project_db(p):
+            return os.path.abspath(p)
+
     return None
 
 def list_views(conn):
@@ -164,6 +230,8 @@ def fix_layout_start(conn):
 def main():
     parser = argparse.ArgumentParser(description="FUXA View Manager Utility")
     parser.add_argument("--db", type=str, help="Path to project.fuxap.db (optional, auto-detected if omitted)")
+    parser.add_argument("--plant", type=int, help="Target plant storage server (e.g. 9 for Plant 9)")
+    parser.add_argument("--port", type=int, help="Target server port (e.g. 5801, 9610)")
     parser.add_argument("--list", action="store_true", help="List all views in the database")
     parser.add_argument("--dedup", action="store_true", help="Automatically remove views that have duplicate names")
     parser.add_argument("--remove", type=str, help="Remove view by ID")
@@ -171,12 +239,17 @@ def main():
 
     args = parser.parse_args()
 
-    db_path = find_database(args.db)
+    db_path = find_database(custom_path=args.db, plant=args.plant, port=args.port)
     if not db_path:
-        print("[!] No project.fuxap.db found. Please specify path with --db <path_to_db>")
+        print("[!] No project.fuxap.db found. Please specify path with --db <path_to_db> or target with --plant <id>")
         sys.exit(1)
 
     print(f"[i] Using database: {db_path}")
+
+    # Create backup before any destructive operation
+    if args.dedup or args.remove or args.rename:
+        backup_database(db_path)
+
     conn = sqlite3.connect(db_path)
 
     try:
@@ -193,6 +266,13 @@ def main():
             list_views(conn)
     finally:
         conn.close()
+
+    if args.dedup or args.remove or args.rename:
+        print("\n[📢] Views updated. If FUXA is running, reload or restart PM2 to apply changes:")
+        if args.plant:
+            print(f"     pm2 restart P{args.plant}_Storage_Server")
+        else:
+            print("     pm2 restart P9_Storage_Server  # (or your target instance)")
 
 if __name__ == "__main__":
     main()
