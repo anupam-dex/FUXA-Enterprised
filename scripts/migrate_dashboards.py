@@ -234,12 +234,13 @@ def sync_matching_storage_devices_to_view(
     return report
 
 
-def load_target_tags(db_path: str) -> tuple[dict, dict]:
+def load_target_tags(db_path: str) -> tuple[dict, dict, dict]:
     """
     Loads all tags currently present in the target View Server database.
     Returns:
-    - by_name: { normalized_name: { id, name, dev_name, dev_id } }
-    - by_id:   { tag_id: { id, name, dev_name, dev_id } }
+    - by_name:  { normalized_name: { id, name, dev_name, dev_id } }
+    - by_alpha: { alphanumeric_clean_name: { id, name, dev_name, dev_id } }
+    - by_id:    { tag_id: { id, name, dev_name, dev_id } }
     """
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -248,6 +249,7 @@ def load_target_tags(db_path: str) -> tuple[dict, dict]:
     conn.close()
 
     by_name = {}
+    by_alpha = {}
     by_id = {}
 
     for dev_id, dev_val in rows:
@@ -264,18 +266,41 @@ def load_target_tags(db_path: str) -> tuple[dict, dict]:
                     "dev_id": dev_id
                 }
                 by_id[t_id] = tag_entry
+                
+                # Standard normalized (lowercase with underscores)
                 norm_name = t_name.strip().lower().replace(" ", "_")
                 by_name[norm_name] = tag_entry
+                
+                # Pure alphanumeric key for robust cross-project tolerance
+                alpha_key = normalize_string(t_name)
+                if alpha_key:
+                    by_alpha[alpha_key] = tag_entry
         except Exception:
             pass
 
-    return by_name, by_id
+    return by_name, by_alpha, by_id
 
 
-def remap_view_bindings(view_obj: dict, target_tags_by_name: dict, target_tags_by_id: dict) -> tuple[dict, dict]:
+def resolve_tag_match(var_identifier: str, by_id: dict, by_name: dict, by_alpha: dict) -> dict | None:
+    """Finds a matching target tag by ID, normalized name, or alphanumeric signature"""
+    if not var_identifier:
+        return None
+    val_str = str(var_identifier).strip()
+    if val_str in by_id:
+        return by_id[val_str]
+    norm_name = val_str.lower().replace(" ", "_")
+    if norm_name in by_name:
+        return by_name[norm_name]
+    alpha_key = normalize_string(val_str)
+    if alpha_key in by_alpha:
+        return by_alpha[alpha_key]
+    return None
+
+
+def remap_view_bindings(view_obj: dict, target_tags_by_name: dict, target_tags_by_alpha: dict, target_tags_by_id: dict) -> tuple[dict, dict]:
     """
     Inspects all widget items in the view and remaps their tag bindings
-    to the target server's tags by tag name.
+    (primary telemetry, gauges min/max, colors, status) to the target server's tags.
     """
     stats = {
         "total_items": 0,
@@ -301,28 +326,32 @@ def remap_view_bindings(view_obj: dict, target_tags_by_name: dict, target_tags_b
 
         stats["bound_items"] += 1
 
-        # Check if var_id is already an exact match in target
-        if var_id and var_id in target_tags_by_id:
-            stats["exact_matches"] += 1
-            # Ensure device name is aligned
-            prop["variableSrc"] = target_tags_by_id[var_id]["dev_name"]
-            continue
+        # Resolve primary variable
+        matched = resolve_tag_match(var_id, target_tags_by_id, target_tags_by_name, target_tags_by_alpha)
+        if not matched and var_name:
+            matched = resolve_tag_match(var_name, target_tags_by_id, target_tags_by_name, target_tags_by_alpha)
 
-        # Try to resolve by normalized tag name
-        search_name = (var_name or var_id).strip().lower().replace(" ", "_")
-        matched_target = target_tags_by_name.get(search_name)
-
-        if matched_target:
-            stats["remapped"] += 1
-            prop["variableId"] = matched_target["id"]
-            prop["variable"] = matched_target["name"]
-            prop["variableSrc"] = matched_target["dev_name"]
+        if matched:
+            if var_id == matched["id"]:
+                stats["exact_matches"] += 1
+            else:
+                stats["remapped"] += 1
+            prop["variableId"] = matched["id"]
+            prop["variable"] = matched["name"]
+            prop["variableSrc"] = matched["dev_name"]
         else:
             stats["unmatched"].append({
                 "item_id": item_id,
                 "item_type": item.get("type"),
                 "variable": var_name or var_id
             })
+
+        # Remap secondary gauge properties if present
+        for sec_key in ("minVariableId", "maxVariableId", "variableColorId"):
+            if sec_key in prop and prop[sec_key]:
+                sec_match = resolve_tag_match(prop[sec_key], target_tags_by_id, target_tags_by_name, target_tags_by_alpha)
+                if sec_match:
+                    prop[sec_key] = sec_match["id"]
 
     return view_obj, stats
 
@@ -360,7 +389,7 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
     # Synchronize matching devices from Central Storage Server FIRST (ignore direct PLC connections)
     storage_sync_report = sync_matching_storage_devices_to_view(src_project, db_path, plant_id, dry_run=dry_run)
 
-    tags_by_name, tags_by_id = load_target_tags(db_path)
+    tags_by_name, tags_by_alpha, tags_by_id = load_target_tags(db_path)
     print(f"[+] Loaded {len(tags_by_id)} target tag(s) across connected storage devices.")
 
     # 3. Remap all views
@@ -375,7 +404,7 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
     }
 
     for v in src_views:
-        rem_view, s = remap_view_bindings(v, tags_by_name, tags_by_id)
+        rem_view, s = remap_view_bindings(v, tags_by_name, tags_by_alpha, tags_by_id)
         remapped_views.append(rem_view)
         total_stats["total_items"] += s["total_items"]
         total_stats["bound_items"] += s["bound_items"]
