@@ -175,6 +175,47 @@ def dedup_views(conn):
     conn.commit()
     print("[✓] Duplicates successfully removed and layout updated.")
 
+def remove_view_by_name(conn, view_name):
+    cur = conn.cursor()
+    cur.execute("SELECT name, value FROM views;")
+    rows = cur.fetchall()
+
+    matching = []
+    for r in rows:
+        vid = r[0]
+        try:
+            val = json.loads(r[1])
+            vname = val.get("name", vid)
+        except Exception:
+            vname = vid
+        if vname.lower() == view_name.lower():
+            matching.append((vid, vname))
+
+    if not matching:
+        print(f"[X] No view found with name: '{view_name}'.")
+        return False
+
+    print(f"[i] Found {len(matching)} view(s) matching '{view_name}':")
+    for vid, vname in matching:
+        print(f"    - ID: {vid} | Name: '{vname}'")
+
+    if len(matching) > 1:
+        to_delete = matching[1:]
+        for vid, vname in to_delete:
+            cur.execute("DELETE FROM views WHERE name = ?;", (vid,))
+            print(f"    - Deleted duplicate view ID: {vid}")
+        fix_layout_start(conn)
+        conn.commit()
+        print(f"[✓] Deleted {len(to_delete)} duplicate view copy(ies). Kept primary ID: {matching[0][0]}")
+        return True
+    else:
+        vid = matching[0][0]
+        cur.execute("DELETE FROM views WHERE name = ?;", (vid,))
+        fix_layout_start(conn)
+        conn.commit()
+        print(f"[✓] Successfully removed view '{matching[0][1]}' (ID: {vid}).")
+        return True
+
 def remove_view(conn, view_id):
     cur = conn.cursor()
     cur.execute("SELECT name, value FROM views WHERE name = ?;", (view_id,))
@@ -235,6 +276,7 @@ def main():
     parser.add_argument("--list", action="store_true", help="List all views in the database")
     parser.add_argument("--dedup", action="store_true", help="Automatically remove views that have duplicate names")
     parser.add_argument("--remove", type=str, help="Remove view by ID")
+    parser.add_argument("--remove-name", type=str, help="Remove or dedup view by its displayed Name (e.g. 'DECOATER_1')")
     parser.add_argument("--rename", nargs=2, metavar=("VIEW_ID", "NEW_NAME"), help="Rename view by ID to NEW_NAME")
 
     args = parser.parse_args()
@@ -247,7 +289,7 @@ def main():
     print(f"[i] Using database: {db_path}")
 
     # Create backup before any destructive operation
-    if args.dedup or args.remove or args.rename:
+    if args.dedup or args.remove or args.remove_name or args.rename:
         backup_database(db_path)
 
     conn = sqlite3.connect(db_path)
@@ -259,6 +301,9 @@ def main():
         elif args.remove:
             remove_view(conn, args.remove)
             list_views(conn)
+        elif args.remove_name:
+            remove_view_by_name(conn, args.remove_name)
+            list_views(conn)
         elif args.rename:
             rename_view(conn, args.rename[0], args.rename[1])
             list_views(conn)
@@ -267,7 +312,7 @@ def main():
     finally:
         conn.close()
 
-    if args.dedup or args.remove or args.rename:
+    if args.dedup or args.remove or args.remove_name or args.rename:
         print("\n[📢] Views updated. If FUXA is running, reload or restart PM2 to apply changes:")
         if args.plant:
             print(f"     pm2 restart P{args.plant}_Storage_Server")
