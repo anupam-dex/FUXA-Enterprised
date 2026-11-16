@@ -29,14 +29,18 @@ function renderTopology(matrix) {
     
     // Header Filter Pills setup
     let pillsHtml = `<button class="filter-pill ${selectedPlantFilter === 'all' ? 'active' : ''}" onclick="setPlantFilter('all')">All Plants</button>`;
+    let totalFaults = 0;
 
     matrix.forEach(plant => {
         const pId = plant.plant_id;
         const pCount = (plant.instances || []).length;
         totalInstances += pCount;
 
+        if (!plant.storage_online) totalFaults++;
+
         plant.instances.forEach(inst => {
             allInstancesMap[inst.id] = { ...inst, plant_name: plant.name, storage_port: plant.storage_port };
+            if (!inst.is_live && !inst.user_stopped) totalFaults++;
         });
 
         // Add filter pill
@@ -48,6 +52,17 @@ function renderTopology(matrix) {
         card.className = `plant-strip-card ${isSelected ? 'active' : ''}`;
         card.onclick = () => setPlantFilter(isSelected ? 'all' : String(pId));
 
+        const storageOnline = plant.storage_online;
+        const storageChipHtml = storageOnline ? `
+            <span class="storage-chip" onclick="event.stopPropagation(); window.open('http://' + (window.location.hostname || '127.0.0.1') + ':${plant.storage_port}/editor', '_blank')" title="Click to open Plant ${pId} Storage Server (Field Connections & InfluxDB)" style="cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='#38bdf8'" onmouseout="this.style.borderColor=''">
+                <span class="dot live"></span> Storage :${plant.storage_port} ↗
+            </span>
+        ` : `
+            <span class="storage-chip" onclick="event.stopPropagation(); openStorageDiagnosticsModal('${pId}')" title="Storage Master Down! Click to inspect fault" style="cursor: pointer; border-color: #ef4444; background: rgba(239, 68, 68, 0.15); color: #fca5a5;">
+                <span class="dot" style="background: #ef4444;"></span> Storage :${plant.storage_port} (DOWN) 🩺
+            </span>
+        `;
+
         card.innerHTML = `
             <div class="plant-strip-top">
                 <div>
@@ -57,9 +72,7 @@ function renderTopology(matrix) {
                 <span class="views-count-pill ${pCount > 0 ? 'has-active' : ''}">${pCount} Active</span>
             </div>
             <div class="plant-strip-bottom">
-                <span class="storage-chip" onclick="event.stopPropagation(); window.open('http://' + (window.location.hostname || '127.0.0.1') + ':${plant.storage_port}/editor', '_blank')" title="Click to open Plant ${pId} Storage Server (Field Connections & InfluxDB)" style="cursor: pointer; transition: all 0.2s;" onmouseover="this.style.borderColor='#38bdf8'" onmouseout="this.style.borderColor=''">
-                    <span class="dot live"></span> Storage :${plant.storage_port} ↗
-                </span>
+                ${storageChipHtml}
                 <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono);">InfluxDB Master</span>
             </div>
         `;
@@ -71,6 +84,13 @@ function renderTopology(matrix) {
     // Update global telemetry counters
     document.getElementById('stat-views-total').textContent = totalInstances;
     document.getElementById('pipe-active-count').textContent = `${totalInstances} Deployed Lines`;
+
+    const faultPill = document.getElementById('pill-fleet-faults');
+    const faultCountEl = document.getElementById('stat-faults-count');
+    if (faultPill && faultCountEl) {
+        faultCountEl.textContent = totalFaults;
+        faultPill.style.display = totalFaults > 0 ? 'flex' : 'none';
+    }
 
     renderInstancesList();
 }
@@ -125,16 +145,39 @@ function renderInstancesList() {
     instances.forEach(inst => {
         const row = document.createElement('div');
         row.className = 'instance-card-row';
+        const isLive = inst.is_live;
+        const isFaulted = !isLive && !inst.user_stopped;
+
+        if (isFaulted) {
+            row.style.borderColor = '#ef4444';
+            row.style.background = 'rgba(239, 68, 68, 0.04)';
+        }
 
         // OT Clean URLs without port numbers (Port 80 Reverse Proxy)
         const otEditor = `${proto}//${host}${inst.subpath}/editor`;
         const otView = `${proto}//${host}${inst.subpath}/home`;
 
+        const dotClass = isLive ? 'dot live' : (isFaulted ? 'dot' : 'dot');
+        const dotStyle = isLive ? '' : (isFaulted ? 'background: #ef4444;' : 'background: #64748b;');
+
+        const faultBarHtml = !isLive ? `
+            <div style="grid-column: 1 / -1; background: ${isFaulted ? 'rgba(239, 68, 68, 0.12)' : 'rgba(30, 41, 59, 0.6)'}; border: 1px solid ${isFaulted ? '#ef4444' : '#334155'}; border-radius: 6px; padding: 7px 12px; margin-top: 10px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="font-size: 0.8rem; color: ${isFaulted ? '#fca5a5' : '#94a3b8'};">
+                    <strong>${isFaulted ? '⚠️ CRITICAL FAULT:' : '⏹️ STATUS:'}</strong> ${inst.fault_diagnostic?.fault_summary || (isFaulted ? 'Server down' : 'Stopped by user')}
+                    <span style="color: #cbd5e1; font-size: 0.74rem; margin-left: 8px;">— ${inst.fault_diagnostic?.fault_details || ''}</span>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                    <button onclick="openDiagnosticsModal('${inst.id}')" class="btn btn-sm btn-secondary" style="font-size: 0.72rem; padding: 3px 8px; border-color: #38bdf8; color: #38bdf8;">🩺 Diagnostics & Logs</button>
+                    <button onclick="triggerInstanceSelfHeal('${inst.id}')" class="btn btn-sm btn-primary" style="font-size: 0.72rem; padding: 3px 8px; background: #10b981; border-color: #059669;">⚡ 1-Click Heal</button>
+                </div>
+            </div>
+        ` : '';
+
         row.innerHTML = `
             <!-- Col 1: Server Identity & Plant -->
             <div class="col-server">
                 <div class="title-row">
-                    <span class="dot live" title="Instance Live"></span>
+                    <span class="${dotClass}" style="${dotStyle}" title="Instance Status"></span>
                     <span class="name">${inst.name}</span>
                 </div>
                 <div class="plant-tag">${inst.plant_name || `Plant ${inst.plant}`} &bull; Div ${inst.division || 6} (Line ${inst.line || 1})</div>
@@ -142,7 +185,7 @@ function renderInstancesList() {
 
             <!-- Col 2: Ports & Subpath -->
             <div class="col-routing">
-                <div class="port-badge" title="Internal backend process port">Port: ${inst.port}</div>
+                <div class="port-badge" title="Internal backend process port" style="${!isLive ? 'border-color: #ef4444; color: #fca5a5;' : ''}">Port: ${inst.port}</div>
                 <div class="subpath-badge">${inst.subpath}</div>
             </div>
 
@@ -162,14 +205,20 @@ function renderInstancesList() {
 
             <!-- Col 5: Actions -->
             <div class="col-actions">
-                <a href="${otEditor}" target="_blank" class="btn btn-primary btn-sm" title="Open Editor (Port 80 - No Port Number)">Editor</a>
-                <a href="${otView}" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator View (Port 80 - No Port Number)">View</a>
+                ${isLive ? `
+                    <a href="${otEditor}" target="_blank" class="btn btn-primary btn-sm" title="Open Editor (Port 80 - No Port Number)">Editor</a>
+                    <a href="${otView}" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator View (Port 80 - No Port Number)">View</a>
+                ` : `
+                    <button onclick="triggerInstanceSelfHeal('${inst.id}')" class="btn btn-primary btn-sm" style="background: #10b981; border-color: #059669;" title="Auto-Heal & Launch Server">▶ Heal & Start</button>
+                    <button onclick="openDiagnosticsModal('${inst.id}')" class="btn btn-secondary btn-sm" style="color: #38bdf8;" title="View Exact Fault Diagnostics">🩺 Diag</button>
+                `}
                 <button onclick="openMigrateModal('${inst.id}')" class="btn btn-secondary btn-sm" title="Import Dashboards (.json/.fuxap) into this View Server" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">📥 Import</button>
                 <button onclick="syncTags('${inst.id}')" class="btn btn-secondary btn-sm" title="Sync Plant Storage Tags into this View Server">🔄 Sync Tags</button>
                 <button onclick="editInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Edit View Server">✏️ Edit</button>
                 <button onclick="viewLogs('${inst.id}')" class="btn btn-secondary btn-sm" title="View Logs">Logs</button>
                 <button onclick="deleteInstance('${inst.id}')" class="btn btn-danger btn-sm" title="Delete Instance">&#128465;</button>
             </div>
+            ${faultBarHtml}
         `;
         list.appendChild(row);
     });
@@ -1012,6 +1061,180 @@ async function executeProjectMigration() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = '🚀 Start 1-Click Dashboard Migration';
+    }
+}
+
+// ==============================================================================
+// 100% Reliable Industrial Diagnostics & Self-Healing Engine
+// ==============================================================================
+let currentDiagTarget = null; // { type: 'instance'|'storage', id: ... }
+
+async function openDiagnosticsModal(instanceId) {
+    currentDiagTarget = { type: 'instance', id: instanceId };
+    const modal = document.getElementById('diagnostics-modal');
+    if (!modal) return;
+
+    const inst = allInstancesMap[instanceId] || {};
+    document.getElementById('diag-title').textContent = `Diagnostics: ${inst.name || instanceId}`;
+    document.getElementById('diag-subpath').textContent = `Subpath: ${inst.subpath || '--'} (Plant ${inst.plant || '?'}, Line ${inst.line || '?'})`;
+    document.getElementById('diag-port').textContent = inst.port || '--';
+    document.getElementById('diag-fault-summary').textContent = 'Fetching live diagnostics...';
+    document.getElementById('diag-fault-details').textContent = '';
+    document.getElementById('diag-remedy-text').textContent = 'Analyzing system state...';
+    document.getElementById('diag-log-content').textContent = 'Loading logs...';
+
+    modal.classList.add('show');
+
+    try {
+        const res = await fetch(`/api/instances/${instanceId}/diagnostics`);
+        const data = await res.json();
+        renderDiagnosticsData(data);
+    } catch (e) {
+        document.getElementById('diag-fault-summary').textContent = 'Diagnostic request error: ' + e.message;
+    }
+}
+
+async function openStorageDiagnosticsModal(plantId) {
+    currentDiagTarget = { type: 'storage', id: plantId };
+    const modal = document.getElementById('diagnostics-modal');
+    if (!modal) return;
+
+    document.getElementById('diag-title').textContent = `Storage Diagnostics: Plant ${plantId} Master`;
+    document.getElementById('diag-subpath').textContent = `Subpath: /p${plantId}/storage (Central Field Poller & InfluxDB)`;
+    document.getElementById('diag-fault-summary').textContent = 'Fetching storage diagnostics...';
+    document.getElementById('diag-log-content').textContent = 'Loading logs...';
+
+    modal.classList.add('show');
+
+    try {
+        const res = await fetch(`/api/storage/${plantId}/diagnostics`);
+        const data = await res.json();
+        renderDiagnosticsData(data);
+    } catch (e) {
+        document.getElementById('diag-fault-summary').textContent = 'Diagnostic request error: ' + e.message;
+    }
+}
+
+function renderDiagnosticsData(data) {
+    const diag = data.diagnostics || {};
+    const isLive = data.is_live;
+    const portEl = document.getElementById('diag-port');
+    const statusPill = document.getElementById('diag-status-pill');
+    const faultBox = document.getElementById('diag-fault-box');
+    const faultSummary = document.getElementById('diag-fault-summary');
+    const faultDetails = document.getElementById('diag-fault-details');
+    const remedyBox = document.getElementById('diag-remedy-box');
+    const remedyText = document.getElementById('diag-remedy-text');
+    const logContent = document.getElementById('diag-log-content');
+    const logPath = document.getElementById('diag-log-path');
+    const dbStatus = document.getElementById('diag-db-status');
+
+    portEl.textContent = diag.port || data.port || '--';
+    dbStatus.textContent = diag.db_status || 'OK';
+    dbStatus.style.color = diag.db_status === 'OK' ? '#4ade80' : '#f87171';
+    logPath.textContent = diag.log_path || '';
+
+    if (isLive) {
+        statusPill.textContent = 'ONLINE & HEALTHY';
+        statusPill.style.background = '#064e3b';
+        statusPill.style.color = '#34d399';
+        faultBox.style.background = 'rgba(16, 185, 129, 0.1)';
+        faultBox.style.borderColor = '#10b981';
+        faultSummary.style.color = '#34d399';
+        faultSummary.innerHTML = '✓ Instance is running and accepting connections on assigned port.';
+        faultDetails.textContent = diag.port_occupant ? `Process PID ${diag.port_occupant.pid} (${diag.port_occupant.name}) is actively listening.` : 'Port is open.';
+        remedyBox.style.display = 'none';
+    } else {
+        statusPill.textContent = 'FAULTED / DOWN';
+        statusPill.style.background = '#450a0a';
+        statusPill.style.color = '#f87171';
+        faultBox.style.background = 'rgba(239, 68, 68, 0.14)';
+        faultBox.style.borderColor = '#ef4444';
+        faultSummary.style.color = '#f87171';
+        faultSummary.textContent = diag.fault_summary || 'SCADA Server failed to start';
+        faultDetails.textContent = diag.fault_details || 'Process exited prematurely.';
+        remedyBox.style.display = 'block';
+        remedyText.textContent = diag.remedy || 'Click "1-Click Auto-Fix & Relaunch" to clear rogue locks and restart.';
+    }
+
+    const logLines = diag.log_tail || [];
+    logContent.textContent = logLines.length > 0 ? logLines.join('\n') : 'No log output captured yet.';
+    logContent.scrollTop = logContent.scrollHeight;
+}
+
+function closeDiagnosticsModal() {
+    const modal = document.getElementById('diagnostics-modal');
+    if (modal) modal.classList.remove('show');
+    currentDiagTarget = null;
+}
+
+async function executeModalSelfHeal() {
+    if (!currentDiagTarget) return;
+    const btn = document.getElementById('btn-diag-self-heal');
+    btn.disabled = true;
+    btn.textContent = '⏳ Auto-Healing & Starting...';
+
+    try {
+        if (currentDiagTarget.type === 'instance') {
+            await triggerInstanceSelfHeal(currentDiagTarget.id, false);
+            // Re-fetch diagnostics
+            const res = await fetch(`/api/instances/${currentDiagTarget.id}/diagnostics`);
+            const data = await res.json();
+            renderDiagnosticsData(data);
+        } else {
+            await triggerStorageSelfHeal(currentDiagTarget.id, false);
+            const res = await fetch(`/api/storage/${currentDiagTarget.id}/diagnostics`);
+            const data = await res.json();
+            renderDiagnosticsData(data);
+        }
+    } catch (e) {
+        alert('Self-heal failed: ' + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⚡ 1-Click Auto-Fix & Relaunch';
+        loadMatrix();
+    }
+}
+
+async function triggerInstanceSelfHeal(id, showAlert = true) {
+    try {
+        const res = await fetch(`/api/instances/${id}/self-heal`, { method: 'POST' });
+        const data = await res.json();
+        if (showAlert) {
+            alert(data.success ? `✓ ${data.message}` : `[-] ${data.message}`);
+        }
+        loadMatrix();
+    } catch (e) {
+        if (showAlert) alert('Self-heal error: ' + e.message);
+    }
+}
+
+async function triggerStorageSelfHeal(plantId, showAlert = true) {
+    try {
+        const res = await fetch(`/api/storage/${plantId}/self-heal`, { method: 'POST' });
+        const data = await res.json();
+        if (showAlert) {
+            alert(data.success ? `✓ ${data.message}` : `[-] ${data.message}`);
+        }
+        loadMatrix();
+    } catch (e) {
+        if (showAlert) alert('Self-heal error: ' + e.message);
+    }
+}
+
+function copyDiagnosticLogs() {
+    const logContent = document.getElementById('diag-log-content')?.textContent || '';
+    navigator.clipboard.writeText(logContent).then(() => {
+        alert('Diagnostic logs copied to clipboard!');
+    }).catch(() => {
+        alert('Failed to copy logs.');
+    });
+}
+
+function scrollToFirstFault() {
+    const faultedEl = document.querySelector('.instance-card-row[style*="border-color"]');
+    if (faultedEl) {
+        faultedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 }
 

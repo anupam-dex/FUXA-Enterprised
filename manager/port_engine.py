@@ -265,11 +265,23 @@ class PortEngine:
         instances = self.registry.get("instances", {})
 
         for p_id, p_info in plants.items():
+            storage_port = p_info["storage_port"]
+            storage_online = self.is_port_in_use(storage_port)
+            storage_diag = None
+            if not storage_online:
+                try:
+                    from diagnostics import diagnose_instance_fault
+                    s_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{p_id}_{storage_port}")
+                    storage_diag = diagnose_instance_fault(f"storage_p{p_id}", storage_port, s_work_dir, expected_running=True)
+                except Exception:
+                    pass
+
             plant_data = {
                 "plant_id": p_id,
                 "name": p_info["name"],
-                "storage_port": p_info["storage_port"],
-                "storage_online": self.is_port_in_use(p_info["storage_port"]),
+                "storage_port": storage_port,
+                "storage_online": storage_online,
+                "storage_diagnostic": storage_diag,
                 "instances": []
             }
 
@@ -283,7 +295,33 @@ class PortEngine:
                     is_live = self.is_port_in_use(inst["port"])
                     inst_copy = dict(inst)
                     inst_copy["is_live"] = is_live
-                    inst_copy["status"] = "RUNNING" if is_live else "STOPPED"
+                    
+                    if is_live:
+                        inst_copy["status"] = "RUNNING"
+                        inst_copy["fault_diagnostic"] = None
+                    else:
+                        if inst.get("user_stopped"):
+                            inst_copy["status"] = "STOPPED"
+                            inst_copy["fault_diagnostic"] = {
+                                "fault_summary": "Instance stopped by user",
+                                "fault_details": "Server process was intentionally stopped.",
+                                "remedy": "Click Start in Fleet Manager to launch this server."
+                            }
+                        else:
+                            inst_copy["status"] = "FAULTED"
+                            try:
+                                from diagnostics import diagnose_instance_fault
+                                work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{inst['port']}")
+                                inst_copy["fault_diagnostic"] = diagnose_instance_fault(
+                                    inst_id, inst["port"], work_dir, expected_running=True
+                                )
+                            except Exception as e:
+                                inst_copy["fault_diagnostic"] = {
+                                    "fault_summary": f"Server down on Port {inst['port']}",
+                                    "fault_details": str(e),
+                                    "remedy": "Click 1-Click Fix & Heal to restart."
+                                }
+
                     plant_data["instances"].append(inst_copy)
 
             matrix.append(plant_data)

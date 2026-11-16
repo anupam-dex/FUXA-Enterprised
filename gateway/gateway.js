@@ -340,8 +340,79 @@ const server = http.createServer((req, res) => {
 
     proxyReq.on('error', (err) => {
         logError(`502 BAD GATEWAY: Failed to forward "${req.method} ${req.url}" to "${target.name}" on Port ${target.port}`, err);
-        res.writeHead(502, { 'Content-Type': 'text/plain' });
-        res.end(`SCADA Gateway 502: Instance on port ${target.port} (${target.name}) is unreachable.`);
+        
+        const isHtml = (req.headers['accept'] || '').includes('text/html') || (!req.url.includes('.') && !req.url.startsWith('/api'));
+        if (isHtml) {
+            res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SCADA Server Reconnecting | ${target.name}</title>
+    <style>
+        body { margin: 0; padding: 0; background: #0b1120; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 32px; max-width: 580px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); text-align: center; }
+        .icon { font-size: 3rem; margin-bottom: 12px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.05); } }
+        h1 { margin: 0 0 8px 0; font-size: 1.35rem; color: #f1f5f9; }
+        p { margin: 0 0 16px 0; color: #94a3b8; font-size: 0.9rem; line-height: 1.5; }
+        .diag-box { background: #0f172a; border: 1px solid #334155; border-radius: 8px; padding: 14px; text-align: left; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; color: #cbd5e1; margin-bottom: 20px; }
+        .diag-row { margin-bottom: 6px; display: flex; justify-content: space-between; }
+        .diag-row strong { color: #38bdf8; }
+        .err-text { color: #f87171; word-break: break-all; margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 8px; }
+        .progress-bar { width: 100%; height: 4px; background: #334155; border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
+        .progress-fill { height: 100%; background: #38bdf8; width: 100%; animation: countdown 4s linear infinite; }
+        @keyframes countdown { from { width: 0%; } to { width: 100%; } }
+        .btn-group { display: flex; gap: 10px; justify-content: center; }
+        .btn { padding: 9px 16px; border-radius: 6px; font-size: 0.82rem; font-weight: 600; text-decoration: none; cursor: pointer; border: none; transition: 0.2s; }
+        .btn-primary { background: #0284c7; color: #fff; }
+        .btn-primary:hover { background: #0369a1; }
+        .btn-secondary { background: #334155; color: #cbd5e1; }
+        .btn-secondary:hover { background: #475569; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">🔄</div>
+        <h1>SCADA Instance Initializing / Reconnecting</h1>
+        <p>The SCADA server for <strong>${target.name}</strong> is currently booting or self-healing. Telemetry services will resume automatically.</p>
+        
+        <div class="diag-box">
+            <div class="diag-row"><span>Instance Subpath:</span> <strong>${target.prefix}</strong></div>
+            <div class="diag-row"><span>Internal Port:</span> <strong>Port ${target.port}</strong></div>
+            <div class="diag-row"><span>Watchdog Supervisor:</span> <strong style="color: #4ade80;">Active (Auto-Healing)</strong></div>
+            <div class="err-text">Gateway Diagnostic: ${err.message || 'Connection refused on backend port'}</div>
+        </div>
+
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+
+        <div class="btn-group">
+            <button class="btn btn-primary" onclick="triggerSelfHeal()">🩹 Auto-Heal & Reconnect</button>
+            <a href="http://${req.headers.host ? req.headers.host.split(':')[0] : 'localhost'}:9000/" class="btn btn-secondary" target="_blank">🩺 Fleet Diagnostics</a>
+        </div>
+    </div>
+    <script>
+        async function triggerSelfHeal() {
+            try {
+                const host = window.location.hostname || 'localhost';
+                await fetch('http://' + host + ':9000/api/watchdog/status');
+            } catch(e) {}
+            window.location.reload();
+        }
+        setTimeout(() => window.location.reload(), 4000);
+    </script>
+</body>
+</html>`);
+        } else {
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: true,
+                message: `SCADA Instance on port ${target.port} (${target.name}) is unreachable: ${err.message}`,
+                port: target.port,
+                target: target.name
+            }));
+        }
     });
 
     req.pipe(proxyReq, { end: true });

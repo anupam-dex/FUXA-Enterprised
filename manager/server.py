@@ -32,6 +32,7 @@ from project_builder import (
     get_plant_opcua_endpoint,
     update_project_name_in_db
 )
+from diagnostics import diagnose_instance_fault, auto_heal_instance, find_process_on_port
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from nginx.fuxa_route_generator import generate_nginx_conf, reload_nginx
 
@@ -86,9 +87,9 @@ async def process_watchdog_loop():
     """
     Continuous Industrial Process Watchdog:
     Monitors all central storage masters & distributed view servers.
-    Automatically self-heals any process that stops unexpectedly.
+    Diagnoses exact root causes of crashes and automatically self-heals processes.
     """
-    await asyncio.sleep(10)  # Initial startup grace period
+    await asyncio.sleep(8)  # Initial startup grace period
     while True:
         try:
             if watchdog_state["enabled"]:
@@ -100,12 +101,26 @@ async def process_watchdog_loop():
                 for plant_id, p_info in plants.items():
                     s_port = p_info.get("storage_port")
                     if s_port and not port_engine.is_port_in_use(s_port):
-                        logger.warning(f"[WATCHDOG] Storage Master for Plant {plant_id} (: {s_port}) down! Self-healing...")
                         s_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{s_port}")
-                        pid = _launch_fuxa_instance(f"storage_p{plant_id}", s_port, s_work_dir, f"/p{plant_id}/storage")
+                        diag = diagnose_instance_fault(f"storage_p{plant_id}", s_port, s_work_dir, expected_running=True)
+                        logger.warning(f"[WATCHDOG] Storage Master Plant {plant_id} down! Fault: {diag.get('fault_summary')}. Details: {diag.get('fault_details')}")
+                        
+                        # Execute automated self-heal
+                        auto_heal_instance(s_port, s_work_dir)
+                        pid = _launch_fuxa_instance(f"storage_p{plant_id}", s_port, s_work_dir, f"/p{plant_id}/storage", auto_heal=True)
                         if pid:
                             watchdog_state["auto_recoveries"] += 1
-                            record_watchdog_event(f"Storage Plant {plant_id}", f"Self-healed Storage Master process on port {s_port} (PID {pid})", "STORAGE_RECOVERED")
+                            record_watchdog_event(
+                                f"Storage Plant {plant_id}",
+                                f"Self-healed Storage Master process on port {s_port} (PID {pid}, recovered from: {diag.get('fault_summary')})",
+                                "STORAGE_RECOVERED"
+                            )
+                        else:
+                            record_watchdog_event(
+                                f"Storage Plant {plant_id}",
+                                f"Storage Master failed to restart on port {s_port}! Root cause: {diag.get('fault_summary')}",
+                                "STORAGE_CRASH"
+                            )
 
                 # 2. Audit View Server Instances
                 instances = port_engine.get_all_instances()
@@ -116,10 +131,14 @@ async def process_watchdog_loop():
                     if not port:
                         continue
                     if not port_engine.is_port_in_use(port):
-                        logger.warning(f"[WATCHDOG] View Server '{inst.get('name', inst_id)}' (: {port}) unexpected termination! Self-healing...")
                         work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+                        diag = diagnose_instance_fault(inst_id, port, work_dir, expected_running=True)
+                        logger.warning(f"[WATCHDOG] View Server '{inst.get('name', inst_id)}' (: {port}) down! Fault: {diag.get('fault_summary')}. Details: {diag.get('fault_details')}")
+                        
+                        # Self-heal port and lock files
+                        auto_heal_instance(port, work_dir)
                         subpath = inst.get("subpath") or f"/p{inst.get('plant', 9)}/div{inst.get('division', 1)}/l{inst.get('line', 1)}"
-                        pid = _launch_fuxa_instance(inst_id, port, work_dir, subpath)
+                        pid = _launch_fuxa_instance(inst_id, port, work_dir, subpath, auto_heal=True)
                         if pid:
                             watchdog_state["auto_recoveries"] += 1
                             inst["pid"] = pid
@@ -127,7 +146,19 @@ async def process_watchdog_loop():
                             inst["restart_count"] = inst.get("restart_count", 0) + 1
                             inst["last_recovered_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                             port_engine.register_instance(inst_id, inst)
-                            record_watchdog_event(inst.get("name", inst_id), f"Auto-restarted crashed View Server on port {port} (Restart #{inst['restart_count']}, PID {pid})", "VIEW_RECOVERED")
+                            record_watchdog_event(
+                                inst.get("name", inst_id),
+                                f"Auto-restarted crashed View Server on port {port} (Restart #{inst['restart_count']}, PID {pid}, recovered from: {diag.get('fault_summary')})",
+                                "VIEW_RECOVERED"
+                            )
+                        else:
+                            inst["status"] = "FAULTED"
+                            port_engine.register_instance(inst_id, inst)
+                            record_watchdog_event(
+                                inst.get("name", inst_id),
+                                f"View Server failed to restart on port {port}! Root cause: {diag.get('fault_summary')}",
+                                "VIEW_CRASH"
+                            )
         except Exception as e:
             logger.error(f"[WATCHDOG] Error in watchdog monitor loop: {e}")
 
@@ -417,16 +448,44 @@ def create_project(req: CreateProjectRequest):
         "message": f"View Server successfully created on Port {port} with {tag_count} pre-configured Storage Server tags!"
     }
 
-def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: str):
-    """Starts the FUXA instance process with BASE_PATH and userDir"""
-    if port and port_engine.is_port_in_use(port):
-        logger.warning(f"Port {port} is already active and listening; skipping duplicate launch for {instance_id}.")
-        return None
-
-    # Normalize work_dir to local machine
+def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: str, auto_heal: bool = True):
+    """
+    Starts the FUXA instance process with BASE_PATH and userDir.
+    Includes pre-flight sanitization, startup health check, and immediate crash diagnostics.
+    """
     if not os.path.exists(work_dir):
         work_dir = os.path.join(INSTANCES_DIR, f"port_{port}")
     os.makedirs(work_dir, exist_ok=True)
+
+    # 1. Pre-flight check: Is port occupied?
+    if port and port_engine.is_port_in_use(port):
+        occupant = find_process_on_port(port)
+        cur_proc = running_processes.get(instance_id)
+        if cur_proc and cur_proc.poll() is None and occupant and occupant.get("pid") == cur_proc.pid:
+            logger.info(f"Instance {instance_id} is already cleanly running with PID {cur_proc.pid} on port {port}.")
+            return cur_proc.pid
+
+        # If occupied by rogue or dead process, auto-heal to free port
+        if auto_heal:
+            logger.warning(f"Port {port} occupied by foreign process {occupant}; auto-healing to free port...")
+            auto_heal_instance(port, work_dir)
+            time.sleep(0.5)
+        else:
+            fault_msg = f"Cannot start {instance_id}: Port {port} is occupied by {occupant}."
+            logger.error(fault_msg)
+            record_watchdog_event(instance_id, fault_msg, "STARTUP_BLOCKED")
+            return None
+
+    # 2. Pre-flight check: Clean stale DB lock files
+    db_path = os.path.join(work_dir, "project.fuxap.db")
+    for lock_suffix in ["-journal", "-wal", "-shm"]:
+        lf = db_path + lock_suffix
+        if os.path.exists(lf):
+            try:
+                os.remove(lf)
+                logger.info(f"Cleaned stale lock file: {os.path.basename(lf)}")
+            except Exception:
+                pass
 
     # Ensure common resources folder with TVS logo is provisioned in work_dir
     common_img_dir = os.path.join(work_dir, "_images", "Common")
@@ -445,6 +504,14 @@ def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: s
     env["NODE_OPTIONS"] = "--max-old-space-size=4096"
 
     fuxa_server_dir = os.path.dirname(FUXA_SERVER_PATH)
+    log_file_path = os.path.join(work_dir, "fuxa.log")
+
+    try:
+        with open(log_file_path, "a") as f:
+            f.write(f"\n--- FUXA Instance Boot: {time.strftime('%Y-%m-%d %H:%M:%S')} (Port {port}, Subpath {subpath}) ---\n")
+    except Exception:
+        pass
+
     cmd = ["node", FUXA_SERVER_PATH, "--port", str(port), "--userDir", work_dir]
 
     try:
@@ -452,17 +519,32 @@ def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: s
             cmd,
             cwd=fuxa_server_dir,
             env=env,
-            stdout=open(os.path.join(work_dir, "fuxa.log"), "a"),
+            stdout=open(log_file_path, "a"),
             stderr=subprocess.STDOUT
         )
         running_processes[instance_id] = proc
         logger.info(f"Started FUXA process PID {proc.pid} on port {port}")
+
+        # 3. Post-launch Health Check: Verify process does not crash immediately
+        time.sleep(1.2)
+        if proc.poll() is not None:
+            exit_code = proc.returncode
+            diag = diagnose_instance_fault(instance_id, port, work_dir, expected_running=True)
+            fault_summary = diag.get("fault_summary") or f"Process crashed immediately (exit code {exit_code})"
+            logger.error(f"[STARTUP-CRASH] Instance {instance_id} (Port {port}) failed to boot! Reason: {fault_summary}")
+            record_watchdog_event(instance_id, f"Boot failure: {fault_summary}", "BOOT_CRASH")
+            return None
+
         return proc.pid
+
     except FileNotFoundError:
-        logger.warning("Node.js binary not directly found in PATH. Project files & database created successfully for container or service launch.")
+        fault_msg = "Node.js executable ('node') not found in system PATH."
+        logger.error(f"[STARTUP-FAULT] {fault_msg}")
+        record_watchdog_event(instance_id, fault_msg, "NODE_MISSING")
         return None
     except Exception as e:
-        logger.error(f"Error starting FUXA process: {e}")
+        logger.error(f"[STARTUP-FAULT] Error starting FUXA process: {e}")
+        record_watchdog_event(instance_id, f"Execution error: {e}", "EXEC_ERROR")
         return None
 
 @app.post("/api/instances/{instance_id}/stop")
@@ -552,6 +634,80 @@ def delete_instance(instance_id: str):
     stop_instance(instance_id)
     port_engine.unregister_instance(instance_id)
     return {"success": True}
+
+@app.get("/api/instances/{instance_id}/diagnostics")
+def get_instance_diagnostics(instance_id: str):
+    """Returns deep diagnostic analysis and recent log trace for an instance"""
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    inst = instances[instance_id]
+    port = inst.get("port")
+    work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+    is_live = port_engine.is_port_in_use(port)
+    diag = diagnose_instance_fault(instance_id, port, work_dir, expected_running=not inst.get("user_stopped"))
+    return {
+        "success": True,
+        "instance": inst,
+        "is_live": is_live,
+        "diagnostics": diag
+    }
+
+@app.post("/api/instances/{instance_id}/self-heal")
+def self_heal_instance_endpoint(instance_id: str):
+    """Executes automated self-healing (kills rogue PIDs, cleans DB locks) and relaunches"""
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+    inst = instances[instance_id]
+    port = inst.get("port")
+    work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+
+    heal_res = auto_heal_instance(port, work_dir)
+    inst["user_stopped"] = False
+    pid = _launch_fuxa_instance(instance_id, port, work_dir, inst["subpath"], auto_heal=True)
+    inst["pid"] = pid
+    inst["status"] = "RUNNING" if pid else "FAULTED"
+    inst["last_recovered_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    port_engine.register_instance(instance_id, inst)
+
+    return {
+        "success": bool(pid),
+        "status": inst["status"],
+        "pid": pid,
+        "heal_actions": heal_res.get("actions", []),
+        "message": f"Instance {instance_id} {'restarted successfully with PID ' + str(pid) if pid else 'failed to restart'}"
+    }
+
+@app.get("/api/storage/{plant_id}/diagnostics")
+def get_storage_diagnostics(plant_id: int):
+    """Returns deep diagnostic analysis and recent logs for a Plant Storage Master"""
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+    is_live = port_engine.is_port_in_use(storage_port)
+    diag = diagnose_instance_fault(f"storage_p{plant_id}", storage_port, storage_work_dir, expected_running=True)
+    return {
+        "success": True,
+        "plant_id": plant_id,
+        "port": storage_port,
+        "is_live": is_live,
+        "diagnostics": diag
+    }
+
+@app.post("/api/storage/{plant_id}/self-heal")
+def self_heal_storage_endpoint(plant_id: int):
+    """Executes automated self-healing and restarts the Storage Master"""
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+    heal_res = auto_heal_instance(storage_port, storage_work_dir)
+    pid = _launch_fuxa_instance(f"storage_p{plant_id}", storage_port, storage_work_dir, f"/p{plant_id}/storage", auto_heal=True)
+    return {
+        "success": bool(pid),
+        "port": storage_port,
+        "pid": pid,
+        "heal_actions": heal_res.get("actions", []),
+        "message": f"Storage Master Plant {plant_id} {'restarted with PID ' + str(pid) if pid else 'failed to restart'}"
+    }
 
 @app.post("/api/migrate-project")
 async def api_migrate_project(request: Request):
