@@ -109,7 +109,7 @@ class PortEngine:
         # 1. Sync from local directory
         if os.path.exists(instances_dir):
             for d in os.listdir(instances_dir):
-                m = re.match(r"port_(\d+)", d)
+                m = re.search(r"(\d{4})", d)
                 if m:
                     port = int(m.group(1))
                     inst_id = f"fuxa_port_{port}"

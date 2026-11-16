@@ -27,11 +27,14 @@ logger = logging.getLogger("FleetManager")
 app = FastAPI(title="FUXA Enterprise Fleet Manager")
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-INSTANCES_DIR = os.path.join(BASE_DIR, "instances")
+LOCATIONS_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "locations"))
+VIEWS_DIR = os.path.join(LOCATIONS_DIR, "views")
+STORAGE_DIR = os.path.join(LOCATIONS_DIR, "storage")
 FUXA_SERVER_PATH = os.path.abspath(os.path.join(BASE_DIR, "..", "server", "main.js"))
 NGINX_CONF_DIR = os.path.join(BASE_DIR, "nginx", "conf.d")
 
-os.makedirs(INSTANCES_DIR, exist_ok=True)
+os.makedirs(VIEWS_DIR, exist_ok=True)
+os.makedirs(STORAGE_DIR, exist_ok=True)
 os.makedirs(NGINX_CONF_DIR, exist_ok=True)
 
 pm2_adapter = PM2Adapter()
@@ -50,12 +53,12 @@ class StorageActionRequest(BaseModel):
 @app.on_event("startup")
 def on_startup():
     logger.info("FUXA Fleet Manager initialized. Scanning PM2 and local instances...")
-    port_engine.auto_sync_instances(INSTANCES_DIR)
+    port_engine.auto_sync_instances(VIEWS_DIR)
 
 @app.get("/api/matrix")
 def get_matrix():
     """Returns visual port map, active plants, and live PM2 resource status"""
-    port_engine.auto_sync_instances(INSTANCES_DIR)
+    port_engine.auto_sync_instances(VIEWS_DIR)
     return {
         "matrix": port_engine.get_port_matrix(),
         "plants": port_engine.registry.get("plants", {}),
@@ -79,8 +82,9 @@ def create_view_server(req: CreateViewRequest):
 
     logger.info(f"Provisioning new View Server: {instance_id} on Port {port}")
 
-    # 2. Setup isolated userDir & pre-provision project.fuxap.db
-    instance_work_dir = os.path.join(INSTANCES_DIR, f"port_{port}")
+    # 2. Setup isolated userDir inside locations/views/<location_folder> & pre-provision project.fuxap.db
+    folder_name = f"p{req.plant}_div{req.division}_l{req.line}_port{port}"
+    instance_work_dir = os.path.join(VIEWS_DIR, folder_name)
     os.makedirs(instance_work_dir, exist_ok=True)
 
     div_name = port_engine.registry.get("divisions", {}).get(str(req.division), f"Division_{req.division}")
@@ -214,8 +218,8 @@ def start_storage_server(plant_id: int):
     if pm2_status.get("exists"):
         res = pm2_adapter.restart_instance(pm2_name)
     else:
-        # Prepare dedicated storage workDir
-        storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}")
+        # Prepare dedicated storage workDir inside locations/storage/plant_<id>
+        storage_work_dir = os.path.join(STORAGE_DIR, f"plant_{plant_id}")
         os.makedirs(storage_work_dir, exist_ok=True)
         res = pm2_adapter.start_instance(
             name=pm2_name,
@@ -240,7 +244,7 @@ def stop_storage_server(plant_id: int):
 @app.post("/api/sync")
 def sync_unregistered():
     """Manual sync trigger to detect new PM2 or folder-based view servers"""
-    port_engine.auto_sync_instances(INSTANCES_DIR)
+    port_engine.auto_sync_instances(VIEWS_DIR)
     return {"success": True, "matrix": port_engine.get_port_matrix()}
 
 # Static files for the Manager UI
