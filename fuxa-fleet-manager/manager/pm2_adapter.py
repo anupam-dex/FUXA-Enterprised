@@ -154,7 +154,7 @@ class PM2Adapter:
                     port_match = True
                 elif f"_{target_str}" in p_name or f"-{target_str}" in p_name:
                     port_match = True
-                elif target_str == "5801" and ("P9" in p_name.upper() or "STORAGE" in p_name.upper()):
+                elif target_str in ["5801", "5810"] and ("P9" in p_name.upper() or "STORAGE" in p_name.upper()):
                     port_match = True
 
             if p_name.lower() == target_str.lower() or p_id == target_str or port_match:

@@ -92,7 +92,7 @@ def create_view_server(req: CreateViewRequest):
 
     # Target OPC-UA storage endpoint (central bridge or storage server)
     storage_info = port_engine.registry.get("plants", {}).get(str(req.plant), {})
-    storage_port = storage_info.get("storage_port", 5801)
+    storage_port = storage_info.get("storage_port", 5810)
     opcua_endpoint = f"opc.tcp://127.0.0.1:4840"
 
     generate_fuxa_database(
