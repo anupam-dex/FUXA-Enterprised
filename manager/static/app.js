@@ -910,6 +910,9 @@ async function executeProjectMigration() {
             const formData = new FormData();
             formData.append('dry_run', dryRun ? 'true' : 'false');
             formData.append('restart', restart ? 'true' : 'false');
+            const autoHist = document.getElementById('migrate-enable-history')?.checked ?? true;
+            formData.append('enable_history', autoHist ? 'true' : 'false');
+            formData.append('daq_mode', 'change');
             selectedMigrateFiles.forEach(f => formData.append('files', f));
 
             const resp = await fetch(`/api/storage/${plantId}/import-devices`, {

@@ -429,6 +429,10 @@
                     <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 10px 12px; font-size: 0.76rem; color: #a7f3d0; line-height: 1.45;">
                         🛡️ <strong>Mandatory Hardware Deduplication Active:</strong> Scans all uploaded files, matches hardware connection signatures (IP + Port + SlaveId/Rack/Slot), unifies duplicate devices across projects, and merges new tags without creating duplicate device entries. Views and pages are completely excluded.
                     </div>
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #f8fafc; margin-top: 10px; cursor: pointer;">
+                        <input type="checkbox" id="migrate-enable-history" checked style="accent-color: #3b82f6; width: 16px; height: 16px;">
+                        <span>📈 <strong>Auto-Enable Historical Tagging (DAQ):</strong> Automatically turn on historical logging (on-change) for all imported tags</span>
+                    </label>
                 </div>
 
                 <!-- Destination 2: View Server Selection -->

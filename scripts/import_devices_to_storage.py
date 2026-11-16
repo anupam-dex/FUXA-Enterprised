@@ -256,7 +256,7 @@ def import_devices(
     dry_run: bool = False,
     create_backup: bool = True,
     restart_storage: bool = False,
-    enable_history: bool = False,
+    enable_history: bool = True,
     daq_mode: str = "change",
     daq_interval: int = 60
 ) -> dict:
@@ -497,9 +497,18 @@ if __name__ == "__main__":
         help="Automatically trigger restart of the Storage Server after commit"
     )
     parser.add_argument(
+        "--no-history",
+        dest="enable_history",
+        action="store_false",
+        default=True,
+        help="Skip automatically enabling historical logging (DAQ) for imported tags"
+    )
+    parser.add_argument(
         "--enable-history",
+        dest="enable_history",
         action="store_true",
-        help="Automatically enable bulk historical logging (DAQ) for all imported tags"
+        default=True,
+        help="Automatically enable bulk historical logging (DAQ) for all imported tags (enabled by default)"
     )
     parser.add_argument(
         "--daq-mode",
