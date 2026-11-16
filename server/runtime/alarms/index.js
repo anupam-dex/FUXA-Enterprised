@@ -486,9 +486,14 @@ function AlarmsManager(_runtime) {
         }
     }
 
+    var lastAlarmOverloadWarn = 0;
     var _checkWorking = function (check) {
         if (check && working) {
-            logger.warn('alarms working (check) overload!');
+            var now = Date.now();
+            if (now - lastAlarmOverloadWarn > 5000) {
+                logger.warn('alarms working (check) overload! (rate-limited)');
+                lastAlarmOverloadWarn = now;
+            }
             return false;
         }
         working = check;

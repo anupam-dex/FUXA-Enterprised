@@ -345,11 +345,17 @@ function DaqNode(_settings, _log, _id, _currentStorate) {
 
     /**
      * Used to manage the async add Tag/Node in data db (that not overloading)
+     * Rate-limited to prevent event-loop lockup and log flooding.
      * @param {*} check 
      */
+    var lastDataOverloadWarn = 0;
     var _checkDataWorking = function (check) {
         if (check && dataworking) {
-            logger.warn(`daqstorage.data-overload! '${id}'`);
+            var now = Date.now();
+            if (now - lastDataOverloadWarn > 5000) {
+                logger.warn(`daqstorage.data-overload! '${id}' (rate-limited)`);
+                lastDataOverloadWarn = now;
+            }
             return false;
         }
         dataworking = check;
