@@ -30,6 +30,11 @@ BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 INSTANCES_DIR = os.path.join(BASE_DIR, "instances")
 FLEET_MANAGER_URL = os.environ.get("FLEET_MANAGER_URL", "http://localhost:9000")
 
+sys.path.insert(0, os.path.join(BASE_DIR, "manager"))
+sys.path.insert(0, SCRIPT_DIR)
+from project_builder import get_storage_devices_catalog, get_plant_opcua_endpoint
+from import_devices_to_storage import compute_device_signature, normalize_string, is_ignored_device
+
 
 def load_source_project(source_path_or_url) -> dict:
     """Loads FUXA project JSON from a Python dict, remote URL, a .fuxap, or a .json file."""
@@ -56,9 +61,9 @@ def load_source_project(source_path_or_url) -> dict:
         return data
 
 
-def get_target_db_path(target: str) -> tuple[str, str, int]:
+def get_target_db_path(target: str) -> tuple[str, str, int, int]:
     """
-    Resolves the target SQLite DB path, instance ID, and port.
+    Resolves the target SQLite DB path, instance ID, port, and plant ID.
     target can be:
     - port number (e.g. 9610)
     - instance id (e.g. fuxa_p9_d6_l1_9610)
@@ -92,12 +97,14 @@ def get_target_db_path(target: str) -> tuple[str, str, int]:
     if matched_inst:
         port = matched_inst["port"]
         inst_id = matched_inst["id"]
+        plant_id = int(matched_inst.get("plant", 9))
         work_dir = matched_inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
     else:
         # Fallback to port folder
         if target_str.isdigit():
             port = int(target_str)
             inst_id = f"port_{port}"
+            plant_id = int(str(port)[1]) if str(port).startswith("5") and len(str(port)) >= 4 else 9
             work_dir = os.path.join(INSTANCES_DIR, f"port_{port}")
         else:
             raise ValueError(f"Could not identify View Server instance for '{target}'. Check Fleet Manager.")
@@ -106,7 +113,125 @@ def get_target_db_path(target: str) -> tuple[str, str, int]:
     if not os.path.exists(db_path):
         raise FileNotFoundError(f"Target View Server database not found at {db_path}")
 
-    return db_path, inst_id, port
+    return db_path, inst_id, port, plant_id
+
+
+def sync_matching_storage_devices_to_view(
+    src_project: dict,
+    db_path: str,
+    plant_id: int,
+    dry_run: bool = False
+) -> dict:
+    """
+    1. Extracts incoming devices from src_project.
+    2. Strictly ignores/filters direct PLC devices (Modbus/S7/etc.) - they are NEVER added directly.
+    3. Matches incoming devices against the Plant Storage Server catalog (by hardware signature, name, or ID).
+    4. Imports/syncs those matched devices FROM THE STORAGE SERVER into this View Server's SQLite DB:
+       - Configured as Central Storage OPC-UA bridged devices (opc.tcp://127.0.0.1:4845/fuxa/server/ or plant hub).
+       - Pre-populated with the Central Storage tags.
+    """
+    report = {
+        "matched_from_storage": [],
+        "ignored_direct_devices": [],
+        "missing_in_storage": []
+    }
+
+    # Extract source devices
+    src_devs = src_project.get("devices") or {}
+    if isinstance(src_devs, list):
+        src_devs = {d.get("id") or f"d_{i}": d for i, d in enumerate(src_devs) if isinstance(d, dict)}
+
+    # Filter out internal server device (id 0 / server)
+    filtered_src = {}
+    for d_k, d_v in src_devs.items():
+        if isinstance(d_v, dict) and not is_ignored_device(d_v):
+            filtered_src[d_k] = d_v
+
+    if not filtered_src:
+        return report
+
+    print(f"\n[*] Auditing {len(filtered_src)} device(s) from source project against Plant {plant_id} Storage Server...")
+
+    # Load Central Storage catalog for this plant
+    storage_catalog = get_storage_devices_catalog(plant_id, base_dir=BASE_DIR)
+    plant_endpoint = get_plant_opcua_endpoint(plant_id)
+
+    # Build signature and name lookup tables
+    storage_by_sig = {}
+    storage_by_name = {}
+    storage_by_id = {}
+
+    for s_dev in storage_catalog:
+        sig = compute_device_signature(s_dev)
+        storage_by_sig[sig] = s_dev
+        n_name = normalize_string(s_dev.get("name") or "")
+        if n_name:
+            storage_by_name[n_name] = s_dev
+        if s_dev.get("id"):
+            storage_by_id[s_dev["id"]] = s_dev
+
+    devices_to_inject = []
+
+    for d_k, d_obj in filtered_src.items():
+        dev_name = d_obj.get("name") or d_k
+        dev_type = d_obj.get("type") or "Unknown"
+        report["ignored_direct_devices"].append({"name": dev_name, "type": dev_type})
+
+        sig = compute_device_signature(d_obj)
+        name_norm = normalize_string(dev_name)
+
+        # Match against Storage Server catalog
+        matched_s_dev = None
+        match_reason = None
+
+        if sig in storage_by_sig:
+            matched_s_dev = storage_by_sig[sig]
+            match_reason = f"Hardware Signature match ({sig})"
+        elif name_norm and name_norm in storage_by_name:
+            matched_s_dev = storage_by_name[name_norm]
+            match_reason = f"Normalized Name match ('{dev_name}')"
+        elif d_obj.get("id") and d_obj["id"] in storage_by_id:
+            matched_s_dev = storage_by_id[d_obj["id"]]
+            match_reason = f"Device ID match ('{d_obj['id']}')"
+
+        if matched_s_dev:
+            # Prepare View Server bridged device entry
+            bridged_dev = dict(matched_s_dev)
+            bridged_dev["type"] = "OPCUA"
+            bridged_dev["enabled"] = True
+            bridged_dev["polling"] = 1000
+            if "property" not in bridged_dev or not bridged_dev["property"]:
+                bridged_dev["property"] = {}
+            bridged_dev["property"]["address"] = plant_endpoint
+
+            tag_count = len(bridged_dev.get("tags") or {})
+            devices_to_inject.append(bridged_dev)
+            report["matched_from_storage"].append({
+                "source_name": dev_name,
+                "storage_name": matched_s_dev.get("name"),
+                "tags_count": tag_count,
+                "reason": match_reason
+            })
+            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags) [{match_reason}]")
+        else:
+            report["missing_in_storage"].append(dev_name)
+            print(f"    ⚠️ Notice: Device '{dev_name}' ({dev_type}) is NOT yet configured in Plant {plant_id} Storage Server.")
+            print(f"       (Ignored direct PLC connection to protect View Server architecture. Import to Storage Server first to enable live telemetry).")
+
+    if not dry_run and devices_to_inject:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+        for b_dev in devices_to_inject:
+            cur.execute(
+                "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
+                (b_dev["id"], json.dumps(b_dev), "opc-ua", "", "")
+            )
+        conn.commit()
+        conn.close()
+        print(f"[+] Successfully injected {len(devices_to_inject)} matched Storage device(s) into View Server database.")
+
+    return report
 
 
 def load_target_tags(db_path: str) -> tuple[dict, dict]:
@@ -227,10 +352,13 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
         item_cnt = len(v.get("items", {}))
         print(f"    • [{v_id}] {v_name} ({item_cnt} widgets)")
 
-    # 2. Resolve target DB & tags
-    db_path, inst_id, port = get_target_db_path(target)
-    print(f"[+] Target View Server: {inst_id} (Port {port})")
+    # 2. Resolve target DB, plant & sync matched devices from Storage Server
+    db_path, inst_id, port, plant_id = get_target_db_path(target)
+    print(f"[+] Target View Server: {inst_id} (Port {port}, Plant {plant_id})")
     print(f"[+] Target Database:    {db_path}")
+
+    # Synchronize matching devices from Central Storage Server FIRST (ignore direct PLC connections)
+    storage_sync_report = sync_matching_storage_devices_to_view(src_project, db_path, plant_id, dry_run=dry_run)
 
     tags_by_name, tags_by_id = load_target_tags(db_path)
     print(f"[+] Loaded {len(tags_by_id)} target tag(s) across connected storage devices.")
@@ -296,7 +424,19 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
         cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (v_id, json.dumps(v)))
         print(f"    ✓ Imported view: {v.get('name')} ({v_id})")
 
-    # 5. Update layout navigation so all views have navigation buttons
+    # 5. Import non-device resources (texts, charts)
+    if "texts" in src_project and isinstance(src_project["texts"], dict):
+        cur.execute("CREATE TABLE IF NOT EXISTS texts (name TEXT PRIMARY KEY, value TEXT);")
+        for t_k, t_v in src_project["texts"].items():
+            t_json = json.dumps(t_v) if not isinstance(t_v, str) else t_v
+            cur.execute("INSERT OR REPLACE INTO texts (name, value) VALUES (?, ?);", (t_k, t_json))
+        print(f"    ✓ Imported {len(src_project['texts'])} text resource(s)")
+
+    if "charts" in src_project and isinstance(src_project["charts"], (dict, list)):
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("charts", json.dumps(src_project["charts"])))
+        print("    ✓ Imported chart configuration")
+
+    # 6. Update layout navigation so all views have navigation buttons
     cur.execute("SELECT value FROM general WHERE name='layout';")
     row = cur.fetchone()
     layout = {}
@@ -341,7 +481,7 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
 
     print("[+] Database committed successfully.")
 
-    # 6. Request View Server reload via Fleet Manager
+    # 7. Request View Server reload via Fleet Manager
     try:
         reload_url = f"{FLEET_MANAGER_URL.rstrip('/')}/api/instances/{inst_id}/sync-tags"
         req = urllib.request.Request(reload_url, data=b"", headers={"Content-Type": "application/json"})
@@ -358,6 +498,8 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
         "success": True,
         "views_count": len(remapped_views),
         "views": [{"id": v.get("id"), "name": v.get("name", "Unnamed"), "widgets": len(v.get("items", {}))} for v in remapped_views],
+        "storage_devices_matched": storage_sync_report.get("matched_from_storage", []),
+        "missing_in_storage": storage_sync_report.get("missing_in_storage", []),
         "stats": total_stats,
         "target_instance": inst_id,
         "target_port": port,
