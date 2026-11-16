@@ -562,3 +562,21 @@ body {
     background: #0d1117;
     border-radius: 0 0 12px 12px;
 }
+
+.port-status-box.success {
+    background: rgba(46, 160, 67, 0.15);
+    border: 1px solid rgba(46, 160, 67, 0.4);
+    color: #7ee787;
+}
+
+.port-status-box.error {
+    background: rgba(248, 81, 73, 0.15);
+    border: 1px solid rgba(248, 81, 73, 0.4);
+    color: #f85149;
+}
+
+.port-status-box.loading {
+    background: rgba(56, 139, 253, 0.15);
+    border: 1px solid rgba(56, 139, 253, 0.4);
+    color: #79c0ff;
+}

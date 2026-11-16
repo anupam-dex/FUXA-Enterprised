@@ -138,9 +138,12 @@
                         <span>Determined Port Formula:</span>
                         <code>Plant(<span id="p-calc-plant">9</span>) + Div(<span id="p-calc-div">6</span>) + Line(<span id="p-calc-line">1</span>) + Index(0)</code>
                     </div>
-                    <div class="port-result">
-                        <span>Assigned Port:</span>
-                        <div class="port-chip" id="p-calc-result">9610</div>
+                    <div class="port-result" style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 0.8rem; color: var(--text-muted);">Assigned Port:</span>
+                            <input type="number" id="input-custom-port" min="1024" max="65535" style="width: 100px; text-align: center; font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); background: #0d1117; border: 1px solid var(--border-color); color: var(--accent-cyan); border-radius: 4px; padding: 4px 8px;" oninput="onWizardCustomPortChange()">
+                        </div>
+                        <div id="wizard-port-status" style="font-size: 0.72rem; font-family: var(--font-mono);"></div>
                     </div>
                 </div>
 
@@ -154,6 +157,41 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
                 <button class="btn btn-primary" id="btn-submit" onclick="submitCreateProject()">Launch View Server in PM2</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Port Modal -->
+    <div id="edit-port-modal" class="modal-backdrop">
+        <div class="modal-box" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3 id="edit-port-title">⚙️ Configure Port</h3>
+                <button class="btn-close" onclick="closeEditPortModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <p id="edit-port-desc" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 16px;">
+                    Change the listening port for this server. Ports are versatile and apply instantly in PM2.
+                </p>
+
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="display: flex; justify-content: space-between; margin-bottom: 6px;">
+                        <span>New Port Number</span>
+                        <span id="edit-port-current-badge" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">Current: :5801</span>
+                    </label>
+                    <input type="number" id="input-edit-port" min="1024" max="65535" placeholder="e.g. 5815" style="width: 100%; font-size: 1.1rem; font-weight: 700; font-family: var(--font-mono); padding: 8px 12px; background: #0d1117; border: 1px solid var(--border-color); color: #fff; border-radius: 6px;" oninput="onEditPortInput()">
+                </div>
+
+                <div id="edit-port-status-box" class="port-status-box" style="padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 16px; display: none;">
+                    <!-- Live pre-check feedback -->
+                </div>
+
+                <div style="background: rgba(56, 139, 253, 0.1); border: 1px solid rgba(56, 139, 253, 0.3); border-radius: 6px; padding: 10px 14px; font-size: 0.8rem; color: #79c0ff;">
+                    🛡️ <strong>Safety Guarantee:</strong> Your existing project database (<code>_app.db</code>), screens, and tag configurations are automatically backed up and preserved.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeEditPortModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-apply-port" onclick="submitReconfigurePort()">Apply & Run Instantly</button>
             </div>
         </div>
     </div>

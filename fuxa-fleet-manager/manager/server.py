@@ -8,6 +8,8 @@ Generates Nginx routes and pre-provisions zero-driver OPC-UA project databases.
 import os
 import sys
 import json
+import shutil
+import datetime
 import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
@@ -47,6 +49,9 @@ class CreateViewRequest(BaseModel):
     project_name: str
     custom_port: int = None
 
+class ReconfigurePortRequest(BaseModel):
+    new_port: int
+
 class StorageActionRequest(BaseModel):
     plant_id: int
 
@@ -76,8 +81,15 @@ def create_view_server(req: CreateViewRequest):
     4. Generates Nginx configuration and reloads Nginx.
     5. Saves instance to registry.
     """
-    # 1. Allocate port
-    port = req.custom_port if req.custom_port else port_engine.calculate_port(req.plant, req.division, req.line)
+    # 1. Allocate or validate port
+    if req.custom_port:
+        available, msg = port_engine.check_port_available(req.custom_port)
+        if not available:
+            raise HTTPException(status_code=400, detail=msg)
+        port = req.custom_port
+    else:
+        port = port_engine.calculate_port(req.plant, req.division, req.line)
+
     instance_id = f"fuxa_p{req.plant}_d{req.division}_l{req.line}_{port}"
 
     logger.info(f"Provisioning new View Server: {instance_id} on Port {port}")
@@ -249,6 +261,165 @@ def sync_unregistered():
     """Manual sync trigger to detect new PM2 or folder-based view servers"""
     port_engine.auto_sync_instances(VIEWS_DIR)
     return {"success": True, "matrix": port_engine.get_port_matrix()}
+
+@app.get("/api/ports/check")
+def check_port(port: int, current_id: str = None):
+    """Pre-checks if a port is free or occupied before launching or reconfiguring."""
+    available, msg = port_engine.check_port_available(port, current_id=current_id)
+    return {"port": port, "available": available, "message": msg}
+
+@app.post("/api/storage/{plant_id}/reconfigure")
+def reconfigure_storage_port(plant_id: int, req: ReconfigurePortRequest):
+    """
+    Versatile Port Reconfiguration for Plant Storage Server:
+    1. Pre-checks port availability.
+    2. Backs up current project database.
+    3. Restarts PM2 process with new port.
+    4. Updates registry & master fuxa-fleet-registry.json.
+    """
+    new_port = req.new_port
+    plants = port_engine.registry.get("plants", {})
+    p_info = plants.get(str(plant_id))
+    if not p_info:
+        raise HTTPException(status_code=404, detail="Plant not found")
+
+    old_port = p_info.get("storage_port")
+    if old_port == new_port:
+        return {"success": True, "message": f"Port is already {new_port}", "port": new_port}
+
+    available, msg = port_engine.check_port_available(new_port, current_id=f"storage_{plant_id}")
+    if not available:
+        raise HTTPException(status_code=400, detail=msg)
+
+    pm2_name = p_info.get("storage_pm2_name", f"P{plant_id}_Storage_Server")
+    storage_work_dir = os.path.join(STORAGE_DIR, f"plant_{plant_id}")
+    os.makedirs(storage_work_dir, exist_ok=True)
+
+    # 1. Back up database before modifying port
+    db_file = os.path.join(storage_work_dir, "_appdata", "_app.db")
+    if os.path.exists(db_file) and os.path.getsize(db_file) > 0:
+        backups_dir = os.path.join(LOCATIONS_DIR, "backups")
+        os.makedirs(backups_dir, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dest = os.path.join(backups_dir, f"plant_{plant_id}_storage_p{old_port}_to_p{new_port}_{ts}.db")
+        shutil.copy2(db_file, backup_dest)
+        logger.info(f"Database backed up before port switch: {backup_dest}")
+
+    # 2. Update PM2 if currently registered/running
+    pm2_status = pm2_adapter.get_process_status(pm2_name)
+    was_running = pm2_status.get("exists") and pm2_status.get("status") == "online"
+    if pm2_status.get("exists"):
+        pm2_adapter.delete_instance(pm2_name)
+
+    if was_running:
+        pm2_res = pm2_adapter.start_instance(
+            name=pm2_name,
+            script_path=FUXA_SERVER_PATH,
+            port=new_port,
+            user_dir=storage_work_dir,
+            role="storage"
+        )
+        status_text = "ONLINE" if pm2_res.get("success") else "STOPPED"
+    else:
+        status_text = "STOPPED"
+
+    # 3. Update Registry
+    p_info["storage_port"] = new_port
+    port_engine._save_registry()
+
+    return {
+        "success": True,
+        "plant_id": plant_id,
+        "old_port": old_port,
+        "new_port": new_port,
+        "pm2_name": pm2_name,
+        "status": status_text,
+        "message": f"Plant {plant_id} Storage Server port updated to {new_port} successfully."
+    }
+
+@app.post("/api/instances/{instance_id}/reconfigure")
+def reconfigure_instance_port(instance_id: str, req: ReconfigurePortRequest):
+    """
+    Versatile Port Reconfiguration for HMI View Server:
+    1. Pre-checks port availability.
+    2. Backs up current project database.
+    3. Re-provisions PM2 with new port.
+    4. Regenerates Nginx reverse-proxy configuration.
+    5. Updates registry & master fuxa-fleet-registry.json.
+    """
+    new_port = req.new_port
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    inst = instances[instance_id]
+    old_port = inst.get("port")
+    if old_port == new_port:
+        return {"success": True, "message": f"Port is already {new_port}", "port": new_port}
+
+    available, msg = port_engine.check_port_available(new_port, current_id=instance_id)
+    if not available:
+        raise HTTPException(status_code=400, detail=msg)
+
+    work_dir = inst.get("work_dir")
+    pm2_name = inst.get("pm2_name", instance_id)
+
+    # 1. Back up database before modifying port
+    if work_dir:
+        db_file = os.path.join(work_dir, "_appdata", "_app.db")
+        if os.path.exists(db_file) and os.path.getsize(db_file) > 0:
+            backups_dir = os.path.join(LOCATIONS_DIR, "backups")
+            os.makedirs(backups_dir, exist_ok=True)
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_dest = os.path.join(backups_dir, f"view_{instance_id}_p{old_port}_to_p{new_port}_{ts}.db")
+            shutil.copy2(db_file, backup_dest)
+            logger.info(f"Database backed up before port switch: {backup_dest}")
+
+    # 2. Update PM2 if currently registered/running
+    pm2_status = pm2_adapter.get_process_status(pm2_name)
+    was_running = pm2_status.get("exists") and pm2_status.get("status") == "online"
+    if pm2_status.get("exists"):
+        pm2_adapter.delete_instance(pm2_name)
+
+    if was_running:
+        pm2_res = pm2_adapter.start_instance(
+            name=pm2_name,
+            script_path=FUXA_SERVER_PATH,
+            port=new_port,
+            user_dir=work_dir,
+            subpath=inst.get("subpath", ""),
+            role="view"
+        )
+        inst["status"] = "RUNNING" if pm2_res.get("success") else "STOPPED"
+    else:
+        inst["status"] = "STOPPED"
+
+    # 3. Update Nginx configuration with new port
+    try:
+        generate_nginx_conf(
+            plant=inst.get("plant", 9),
+            division=inst.get("division", 6),
+            line=inst.get("line", 1),
+            port=new_port,
+            project_name=inst.get("name", instance_id),
+            output_dir=NGINX_CONF_DIR
+        )
+        reload_nginx()
+    except Exception as e:
+        logger.warning(f"Failed to update Nginx for {instance_id}: {e}")
+
+    # 4. Update Registry
+    inst["port"] = new_port
+    port_engine.register_instance(instance_id, inst)
+
+    return {
+        "success": True,
+        "instance_id": instance_id,
+        "old_port": old_port,
+        "new_port": new_port,
+        "status": inst["status"],
+        "message": f"View Server {instance_id} port updated to {new_port} successfully."
+    }
 
 @app.get("/api/logs/{target}")
 def get_logs(target: str, lines: int = 100):

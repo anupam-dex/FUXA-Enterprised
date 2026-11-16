@@ -87,6 +87,43 @@ class PortEngine:
             result = s.connect_ex(('127.0.0.1', port))
             return result == 0
 
+    def check_port_available(self, port: int, current_id: str = None) -> tuple:
+        """
+        Validates whether a port can be safely assigned to a server.
+        Returns: (is_available: bool, reason: str)
+        """
+        if port == 9000:
+            return False, "Port 9000 is strictly reserved for the FUXA Fleet Manager."
+
+        if port < 1024 or port > 65535:
+            return False, f"Port {port} is outside valid user range (1024 - 65535)."
+
+        # Check storage servers in registry
+        for p_id, p_info in self.registry.get("plants", {}).items():
+            if str(current_id) != f"storage_{p_id}":
+                if p_info.get("storage_port") == port:
+                    return False, f"Port {port} is already assigned to {p_info.get('name', f'Plant {p_id} Storage')}."
+
+        # Check view instances in registry
+        for inst_id, inst in self.registry.get("instances", {}).items():
+            if str(current_id) != inst_id:
+                if inst.get("port") == port:
+                    return False, f"Port {port} is already assigned to view server '{inst.get('name', inst_id)}'."
+
+        # Active OS socket check 1: connect check
+        if self.is_port_in_use(port):
+            return False, f"Port {port} is actively listening on localhost (used by another service or process)."
+
+        # Active OS socket check 2: bind check
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as test_sock:
+                test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                test_sock.bind(('0.0.0.0', port))
+        except Exception as e:
+            return False, f"Cannot bind to port {port} on host: {e}"
+
+        return True, f"Port {port} is free and ready to use."
+
     def calculate_port(self, plant: int, division: int, line: int) -> int:
         """
         Calculates base port: plant(D1) + division(D2) + line(D3) + 0(D4)

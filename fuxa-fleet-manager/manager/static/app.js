@@ -77,6 +77,7 @@ function renderStorageGrid(matrix) {
                     ? `<button onclick="stopStorage(${plant.plant_id})" class="btn btn-secondary btn-sm" style="flex:1;">Stop</button>`
                     : `<button onclick="startStorage(${plant.plant_id})" class="btn btn-primary btn-sm" style="flex:1;">Start in PM2</button>`
                 }
+                <button onclick="openEditPortModal('storage', '${plant.plant_id}', ${plant.storage_port}, '${plant.name}')" class="btn btn-secondary btn-sm" title="Configure Port">&#9881; Port</button>
                 <button onclick="openLogs('${plant.storage_port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
             </div>
         `;
@@ -182,6 +183,7 @@ function renderPlantGrid(matrix) {
                         <div class="instance-actions">
                             <a href="http://${getServerHost()}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm" title="Open HMI Screen Drawing Editor">Editor</a>
                             <a href="http://${getServerHost()}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator Live View">View</a>
+                            <button onclick="openEditPortModal('view', '${inst.id}', ${inst.port}, '${inst.name}')" class="btn btn-secondary btn-sm" title="Configure Port">&#9881; Port</button>
                             <button onclick="openLogs('${inst.port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
                             ${isOnline 
                                 ? `<button onclick="stopInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Stop in PM2">&#9632;</button>` 
@@ -240,8 +242,55 @@ function updatePortPreview() {
     document.getElementById('p-calc-line').textContent = line;
 
     const basePort = `${plant}${div}${line}0`;
-    document.getElementById('p-calc-result').textContent = basePort;
+    const customPortInput = document.getElementById('input-custom-port');
+    if (customPortInput) {
+        customPortInput.value = basePort;
+    }
     document.getElementById('subpath-preview').textContent = `/p${plant}/div${div}/l${line}`;
+    onWizardCustomPortChange();
+}
+
+function onWizardCustomPortChange() {
+    clearTimeout(wizardPortDebounceTimer);
+    const portVal = parseInt(document.getElementById('input-custom-port').value);
+    const statusEl = document.getElementById('wizard-port-status');
+    const btn = document.getElementById('btn-submit');
+
+    if (!portVal || isNaN(portVal) || portVal < 1024 || portVal > 65535) {
+        statusEl.textContent = '❌ Invalid (1024-65535)';
+        statusEl.style.color = 'var(--accent-red)';
+        btn.disabled = true;
+        return;
+    }
+
+    if (portVal === 9000) {
+        statusEl.textContent = '❌ Port 9000 reserved';
+        statusEl.style.color = 'var(--accent-red)';
+        btn.disabled = true;
+        return;
+    }
+
+    statusEl.textContent = '⏳ Checking...';
+    statusEl.style.color = 'var(--accent-storage)';
+
+    wizardPortDebounceTimer = setTimeout(async () => {
+        try {
+            const res = await fetch(`/api/ports/check?port=${portVal}`);
+            const data = await res.json();
+            if (data.available) {
+                statusEl.textContent = '🟢 Free & Available';
+                statusEl.style.color = 'var(--accent-view)';
+                btn.disabled = false;
+            } else {
+                statusEl.textContent = `🔴 ${data.message}`;
+                statusEl.style.color = 'var(--accent-red)';
+                btn.disabled = true;
+            }
+        } catch (e) {
+            statusEl.textContent = '⚠️ Check error';
+            statusEl.style.color = 'var(--accent-red)';
+        }
+    }, 250);
 }
 
 async function submitCreateProject() {
@@ -249,6 +298,7 @@ async function submitCreateProject() {
     const div = parseInt(document.getElementById('sel-div').value);
     const line = parseInt(document.getElementById('input-line').value || '1');
     const name = document.getElementById('input-name').value || `Plant ${plant} Div ${div} Line ${line}`;
+    const customPort = parseInt(document.getElementById('input-custom-port').value);
 
     const btn = document.getElementById('btn-submit');
     btn.disabled = true;
@@ -262,7 +312,8 @@ async function submitCreateProject() {
                 plant: plant,
                 division: div,
                 line: line,
-                project_name: name
+                project_name: name,
+                custom_port: customPort
             })
         });
 
@@ -407,4 +458,139 @@ function closeLogModal() {
     modal.classList.remove('show');
     currentLogTarget = null;
     currentLogData = null;
+}
+
+// ==============================================================================
+// Versatile Dynamic Port Configuration & Live Pre-Check
+// ==============================================================================
+let editPortType = null;
+let editPortTargetId = null;
+let editPortCurrentVal = null;
+let editPortDebounceTimer = null;
+let wizardPortDebounceTimer = null;
+
+function openEditPortModal(type, targetId, currentPort, name) {
+    editPortType = type;
+    editPortTargetId = targetId;
+    editPortCurrentVal = parseInt(currentPort);
+
+    const modal = document.getElementById('edit-port-modal');
+    document.getElementById('edit-port-title').textContent = `⚙️ Configure Port — ${name}`;
+    document.getElementById('edit-port-current-badge').textContent = `Current Port: :${currentPort}`;
+
+    const input = document.getElementById('input-edit-port');
+    input.value = currentPort;
+
+    const statusBox = document.getElementById('edit-port-status-box');
+    statusBox.style.display = 'block';
+    statusBox.className = 'port-status-box loading';
+    statusBox.textContent = `Current active port: :${currentPort} (no change)`;
+
+    const applyBtn = document.getElementById('btn-apply-port');
+    applyBtn.disabled = false;
+    applyBtn.textContent = 'Apply & Run Instantly';
+
+    modal.classList.add('show');
+}
+
+function closeEditPortModal() {
+    document.getElementById('edit-port-modal').classList.remove('show');
+    clearTimeout(editPortDebounceTimer);
+    editPortType = null;
+    editPortTargetId = null;
+    editPortCurrentVal = null;
+}
+
+function onEditPortInput() {
+    clearTimeout(editPortDebounceTimer);
+    const newPort = parseInt(document.getElementById('input-edit-port').value);
+    const statusBox = document.getElementById('edit-port-status-box');
+    const applyBtn = document.getElementById('btn-apply-port');
+
+    statusBox.style.display = 'block';
+
+    if (!newPort || isNaN(newPort) || newPort < 1024 || newPort > 65535) {
+        statusBox.className = 'port-status-box error';
+        statusBox.textContent = '❌ Port must be a valid number between 1024 and 65535.';
+        applyBtn.disabled = true;
+        return;
+    }
+
+    if (newPort === 9000) {
+        statusBox.className = 'port-status-box error';
+        statusBox.textContent = '❌ Port 9000 is strictly reserved for the Fleet Manager.';
+        applyBtn.disabled = true;
+        return;
+    }
+
+    if (newPort === editPortCurrentVal) {
+        statusBox.className = 'port-status-box loading';
+        statusBox.textContent = `Current active port: :${newPort} (no change)`;
+        applyBtn.disabled = false;
+        return;
+    }
+
+    statusBox.className = 'port-status-box loading';
+    statusBox.textContent = `⏳ Verifying availability of port ${newPort} on host network...`;
+    applyBtn.disabled = true;
+
+    editPortDebounceTimer = setTimeout(async () => {
+        try {
+            const currentOwnerId = editPortType === 'storage' ? `storage_${editPortTargetId}` : editPortTargetId;
+            const res = await fetch(`/api/ports/check?port=${newPort}&current_id=${currentOwnerId}`);
+            const data = await res.json();
+
+            if (data.available) {
+                statusBox.className = 'port-status-box success';
+                statusBox.innerHTML = `🟢 <strong>Available!</strong> Port ${newPort} is free and ready to assign.`;
+                applyBtn.disabled = false;
+            } else {
+                statusBox.className = 'port-status-box error';
+                statusBox.innerHTML = `🔴 <strong>Conflict:</strong> ${data.message}`;
+                applyBtn.disabled = true;
+            }
+        } catch (e) {
+            statusBox.className = 'port-status-box error';
+            statusBox.textContent = `⚠️ Error checking port availability: ${e.message}`;
+            applyBtn.disabled = true;
+        }
+    }, 250);
+}
+
+async function submitReconfigurePort() {
+    const newPort = parseInt(document.getElementById('input-edit-port').value);
+    const applyBtn = document.getElementById('btn-apply-port');
+    const statusBox = document.getElementById('edit-port-status-box');
+
+    applyBtn.disabled = true;
+    applyBtn.textContent = 'Reconfiguring PM2 & Preserving DB...';
+
+    const endpoint = editPortType === 'storage'
+        ? `/api/storage/${editPortTargetId}/reconfigure`
+        : `/api/instances/${editPortTargetId}/reconfigure`;
+
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_port: newPort })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            closeEditPortModal();
+            showAlert(`<strong>&#10003; Port Reconfigured Successfully!</strong><br/>Server running on port <strong>:${newPort}</strong> in PM2. Project database and screens preserved.`);
+            loadMatrix();
+        } else {
+            statusBox.className = 'port-status-box error';
+            statusBox.textContent = `❌ ${data.detail || data.message || 'Failed to reconfigure port'}`;
+            applyBtn.disabled = false;
+            applyBtn.textContent = 'Apply & Run Instantly';
+        }
+    } catch (e) {
+        statusBox.className = 'port-status-box error';
+        statusBox.textContent = `❌ Request failed: ${e.message}`;
+        applyBtn.disabled = false;
+        applyBtn.textContent = 'Apply & Run Instantly';
+    }
 }
