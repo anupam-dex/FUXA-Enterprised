@@ -187,6 +187,9 @@ def merge_device_tags(canonical_dev: dict, incoming_dev: dict) -> tuple[int, int
 
     for t_id, tag in existing_tags.items():
         if isinstance(tag, dict):
+            # Sanitize local SQLite DAQ: Central Storage handles history centrally
+            if "daq" in tag and isinstance(tag["daq"], dict):
+                tag["daq"]["enabled"] = False
             addr = str(tag.get("address") or "").strip().lower()
             if addr:
                 existing_by_address[addr] = t_id
@@ -234,6 +237,8 @@ def merge_device_tags(canonical_dev: dict, incoming_dev: dict) -> tuple[int, int
 
             tag_copy = dict(tag)
             tag_copy["id"] = new_id
+            if "daq" in tag_copy and isinstance(tag_copy["daq"], dict):
+                tag_copy["daq"]["enabled"] = False
             existing_tags[new_id] = tag_copy
             existing_by_id.add(new_id)
             if addr:

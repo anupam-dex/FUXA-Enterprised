@@ -769,7 +769,25 @@ function setProject(prjcontent) {
                         // devices
                         var devices = prjcontent[key];
                         if (devices) {
+                            var seenSignatures = {};
                             Object.values(prjcontent[key]).forEach((device) => {
+                                if (!device || !device.id) return;
+                                if (device.tags) {
+                                    Object.values(device.tags).forEach((tag) => {
+                                        if (tag && tag.daq && tag.daq.enabled) {
+                                            tag.daq.enabled = false;
+                                        }
+                                    });
+                                }
+                                var devAddr = (device.property && (device.property.address || device.property.endpoint || device.property.url)) || '';
+                                var devSig = (device.type || '').toLowerCase() + '://' + devAddr.toLowerCase();
+                                if (devAddr && seenSignatures[devSig]) {
+                                    logger.warn(`setProject: Deduplication engine skipped duplicate device '${device.name}' (${devSig})`);
+                                    return;
+                                }
+                                if (devAddr) {
+                                    seenSignatures[devSig] = true;
+                                }
                                 scs.push({ table: prjstorage.TableType.DEVICES, name: device.id, value: device });
                             });
                         }

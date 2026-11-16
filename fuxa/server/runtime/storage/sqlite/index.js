@@ -371,6 +371,8 @@ function DaqNode(_settings, _log, _id, _currentStorate) {
                     logger.info(`daqstorage.bind-daq-map '${dbfile}' database`, true);
                 });
                 db.serialize(function () {
+                    db.run("PRAGMA journal_mode = WAL;");
+                    db.run("PRAGMA busy_timeout = 5000;");
                     db.run("CREATE TABLE if not exists data (mapid INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, name TEXT, type TEXT)", function (err) {
                         if (err) {
                             logger.error(`daqstorage.bind-daq-map-to-create-table error! '${id}' ${err}`);
@@ -400,6 +402,8 @@ function DaqNode(_settings, _log, _id, _currentStorate) {
                     }
                     logger.info(`daqstorage.bind-daq-data '${dbfile}' database`, true);
                     db.serialize(function () {
+                        db.run("PRAGMA journal_mode = WAL;");
+                        db.run("PRAGMA busy_timeout = 5000;");
                         db.run("CREATE TABLE if not exists data (dt INTEGER, id INTEGER, value TEXT)", function (err) {
                             if (err) {
                                 logger.error(`daqstorage.bind-daq-data-to-create-table error! '${id}' ${err}`);

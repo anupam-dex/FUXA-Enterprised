@@ -20,11 +20,11 @@ function OpcUAclient(_data, _logger, _events, _runtime) {
     var the_session;
     var the_subscription = null;
     var options = {
-        connectionStrategy: { maxRetry: 1, initialDelay: 1000, maxDelay: 3000 },
+        connectionStrategy: { maxRetry: 1, initialDelay: 1000, maxDelay: 2500 },
         keepSessionAlive: true,
         endpointMustExist: false,
-        requestedSessionTimeout: 60000,
-        responseTimeout: 10000
+        requestedSessionTimeout: 15000,
+        responseTimeout: 3000
     };
     var client = null;
 

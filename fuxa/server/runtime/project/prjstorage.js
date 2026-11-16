@@ -72,7 +72,8 @@ function _bind() {
             logger.info(`prjstorage.connected-to ${dbfile} database`, true);
         });
         // prepare query
-        var sql = "CREATE TABLE if not exists general (name TEXT PRIMARY KEY, value TEXT);";
+        var sql = "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;";
+        sql += "CREATE TABLE if not exists general (name TEXT PRIMARY KEY, value TEXT);";
         sql += "CREATE TABLE if not exists views (name TEXT PRIMARY KEY, value TEXT);";
         sql += "CREATE TABLE if not exists devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);";
         sql += "CREATE TABLE if not exists devicesSecurity (name TEXT PRIMARY KEY, value TEXT);";
