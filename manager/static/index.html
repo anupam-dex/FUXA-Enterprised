@@ -571,6 +571,87 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=7"></script>
+    <!-- Bulk Historical Tagging (DAQ) Modal -->
+    <div id="bulk-history-modal" class="modal-backdrop">
+        <div class="modal-box" style="max-width: 600px; width: 92%;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.4rem;">📈</span>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc;">Bulk Historical Tagging (DAQ)</h3>
+                        <div style="font-size: 0.78rem; color: var(--text-muted);">Enable or configure time-series historical logging across all PLC tags in 1 click</div>
+                    </div>
+                </div>
+                <button class="btn-close" onclick="closeBulkHistoryModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px 20px;">
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 5px;">
+                        Target Storage Server:
+                    </label>
+                    <select id="bulk-history-plant" class="form-control" style="width: 100%; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 8px 12px; border-radius: 6px; font-size: 0.88rem;">
+                        <option value="9">Plant 9 Central Storage Master (Port 5900 / 5801)</option>
+                        <option value="1">Plant 1 Storage Master (Port 5100)</option>
+                        <option value="2">Plant 2 Storage Master (Port 5200)</option>
+                        <option value="3">Plant 3 Storage Master (Port 5300)</option>
+                        <option value="4">Plant 4 Storage Master (Port 5400)</option>
+                    </select>
+                </div>
+
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: #cbd5e1; display: block; margin-bottom: 5px;">
+                        Historical Acquisition (DAQ) State:
+                    </label>
+                    <div style="display: flex; gap: 12px;">
+                        <label style="font-size: 0.85rem; color: #f8fafc; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="radio" name="bulk-daq-state" value="enable" checked onchange="toggleBulkHistoryModeUI()">
+                            <strong style="color: #4ade80;">Enable DAQ for All Tags</strong>
+                        </label>
+                        <label style="font-size: 0.85rem; color: #f8fafc; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="radio" name="bulk-daq-state" value="disable" onchange="toggleBulkHistoryModeUI()">
+                            <span style="color: #f87171;">Disable DAQ</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div id="bulk-daq-options" style="background: rgba(15, 23, 42, 0.6); border: 1px solid #334155; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+                    <label style="font-size: 0.82rem; font-weight: 700; color: #94a3b8; display: block; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        Acquisition Mode
+                    </label>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;">
+                        <label style="font-size: 0.84rem; color: #f8fafc; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="bulk-daq-mode" value="change" checked style="margin-top: 3px;">
+                            <div>
+                                <strong style="color: #38bdf8;">Log on Value Change (SCADA Recommended)</strong>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">Only logs when PLC registers update. Minimizes disk storage and InfluxDB overhead.</div>
+                            </div>
+                        </label>
+                        <label style="font-size: 0.84rem; color: #f8fafc; display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="bulk-daq-mode" value="interval" style="margin-top: 3px;">
+                            <div>
+                                <strong style="color: #fbbf24;">Fixed Periodic Interval</strong>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">Logs tag values at a continuous periodic rate regardless of change.</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div id="bulk-interval-box" style="display: flex; align-items: center; gap: 10px; margin-top: 8px;">
+                        <label style="font-size: 0.82rem; color: #cbd5e1; min-width: 140px;">Interval (Seconds):</label>
+                        <input type="number" id="bulk-daq-interval" value="60" min="1" max="86400" class="form-control" style="width: 120px; background: #020617; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.85rem;">
+                    </div>
+                </div>
+
+                <div id="bulk-history-results" style="display: none; border-radius: 8px; padding: 12px; font-size: 0.82rem; margin-top: 10px;"></div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button class="btn btn-secondary" onclick="closeBulkHistoryModal()">Cancel</button>
+                <button id="btn-apply-bulk-history" class="btn btn-primary" onclick="submitBulkHistory()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border-color: #3b82f6;">
+                    🚀 Apply Bulk History (DAQ)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=8"></script>
 </body>
 </html>

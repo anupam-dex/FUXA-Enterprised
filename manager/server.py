@@ -787,6 +787,9 @@ async def api_import_storage_devices(plant_id: int, request: Request):
         form = await request.form()
         dry_run = str(form.get("dry_run", "false")).lower() in ("true", "1", "yes")
         restart = str(form.get("restart", "true")).lower() in ("true", "1", "yes")
+        enable_history = str(form.get("enable_history", "false")).lower() in ("true", "1", "yes")
+        daq_mode = str(form.get("daq_mode", "change"))
+        daq_interval = int(form.get("daq_interval", 60))
 
         file_list = form.getlist("files") or form.getlist("file")
         for f in file_list:
@@ -804,6 +807,9 @@ async def api_import_storage_devices(plant_id: int, request: Request):
             body = {}
         dry_run = body.get("dry_run", False)
         restart = body.get("restart", True)
+        enable_history = body.get("enable_history", False)
+        daq_mode = body.get("daq_mode", "change")
+        daq_interval = int(body.get("daq_interval", 60))
         if "projects" in body and isinstance(body["projects"], list):
             sources = body["projects"]
         elif "project" in body:
@@ -818,11 +824,50 @@ async def api_import_storage_devices(plant_id: int, request: Request):
             plant_id=int(plant_id),
             dry_run=dry_run,
             create_backup=True,
-            restart_storage=restart and not dry_run
+            restart_storage=restart and not dry_run,
+            enable_history=enable_history,
+            daq_mode=daq_mode,
+            daq_interval=daq_interval
         )
         return {"success": True, "report": report}
     except Exception as e:
         logger.error(f"[STORAGE-IMPORT-ERROR] Failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/storage/{plant_id}/bulk-history")
+async def api_bulk_history(plant_id: int, request: Request):
+    """
+    Configures historical data acquisition (DAQ) in bulk across all tags
+    for the plant's Central Storage Server.
+    """
+    scripts_dir = os.path.join(BASE_DIR, "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from bulk_historical_tagging import configure_bulk_history
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    enabled = bool(body.get("enabled", True))
+    mode = str(body.get("mode", "change"))
+    interval = int(body.get("interval", 60))
+    device_filter = body.get("device")
+    restart = bool(body.get("restart", True))
+
+    try:
+        report = configure_bulk_history(
+            plant_id=plant_id,
+            enabled=enabled,
+            mode=mode,
+            interval=interval,
+            device_filter=device_filter,
+            restart_instance=restart
+        )
+        return {"success": True, "report": report}
+    except Exception as e:
+        logger.error(f"[STORAGE-BULK-HISTORY-ERROR] Failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/instances/{instance_id}/sync-tags")

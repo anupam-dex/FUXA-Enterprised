@@ -255,7 +255,10 @@ def import_devices(
     plant_id: int = 9,
     dry_run: bool = False,
     create_backup: bool = True,
-    restart_storage: bool = False
+    restart_storage: bool = False,
+    enable_history: bool = False,
+    daq_mode: str = "change",
+    daq_interval: int = 60
 ) -> dict:
     """
     Main execution engine:
@@ -433,6 +436,21 @@ def import_devices(
     conn.close()
     print(f"[✓] Successfully committed {len(canonical_devices)} deduplicated devices to {db_path}!")
 
+    # 4b. Optional Bulk Historical DAQ configuration
+    if enable_history and not dry_run:
+        from bulk_historical_tagging import configure_bulk_history
+        print(f"[*] Applying bulk historical logging (DAQ: {daq_mode.upper()})...")
+        daq_res = configure_bulk_history(
+            plant_id=plant_id,
+            enabled=True,
+            mode=daq_mode,
+            interval=daq_interval,
+            create_backup=False,
+            restart_instance=False
+        )
+        print(f"[✓] Historical DAQ enabled for {daq_res.get('total_tags_updated', 0)} tags across {daq_res.get('total_devices_affected', 0)} devices!")
+        audit_report["bulk_daq"] = daq_res
+
     # 5. Optional Storage Server Restart
     if restart_storage:
         print(f"[*] Requesting Storage Server restart for Plant {plant_id}...")
@@ -478,6 +496,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Automatically trigger restart of the Storage Server after commit"
     )
+    parser.add_argument(
+        "--enable-history",
+        action="store_true",
+        help="Automatically enable bulk historical logging (DAQ) for all imported tags"
+    )
+    parser.add_argument(
+        "--daq-mode",
+        choices=["change", "interval", "both"],
+        default="change",
+        help="Historical DAQ mode: 'change' (value changes only) or 'interval' (periodic)"
+    )
+    parser.add_argument(
+        "--daq-interval",
+        type=int,
+        default=60,
+        help="Periodic logging interval in seconds (default: 60)"
+    )
 
     args = parser.parse_args()
 
@@ -500,7 +535,10 @@ if __name__ == "__main__":
             plant_id=args.plant,
             dry_run=args.dry_run,
             create_backup=not args.no_backup,
-            restart_storage=args.restart
+            restart_storage=args.restart,
+            enable_history=args.enable_history,
+            daq_mode=args.daq_mode,
+            daq_interval=args.daq_interval
         )
     except Exception as ex:
         print(f"\n[-] Import failed: {ex}")

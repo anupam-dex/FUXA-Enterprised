@@ -76,6 +76,9 @@ function renderTopology(matrix) {
                 <button onclick="event.stopPropagation(); openStorageImportModal('${pId}')" title="Import & Deduplicate Devices into Plant ${pId} Storage Server" style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">
                     📥 Import Devices
                 </button>
+                <button onclick="event.stopPropagation(); openBulkHistoryModal('${pId}')" title="Configure Bulk Historical DAQ for Plant ${pId}" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">
+                    📈 Bulk DAQ
+                </button>
                 <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono); margin-left: auto;">InfluxDB Master</span>
             </div>
         `;
@@ -1247,6 +1250,106 @@ function scrollToFirstFault() {
     const faultedEl = document.querySelector('.instance-card-row[style*="border-color"]');
     if (faultedEl) {
         faultedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+}
+
+// ==============================================================================
+// Bulk Historical Tagging (DAQ) UI Handlers
+// ==============================================================================
+function openBulkHistoryModal(plantId = '9') {
+    const modal = document.getElementById('bulk-history-modal');
+    if (!modal) return;
+    const plantSel = document.getElementById('bulk-history-plant');
+    if (plantSel) plantSel.value = String(plantId);
+
+    const resBox = document.getElementById('bulk-history-results');
+    if (resBox) {
+        resBox.style.display = 'none';
+        resBox.innerHTML = '';
+    }
+    toggleBulkHistoryModeUI();
+    modal.classList.add('active');
+}
+
+function closeBulkHistoryModal() {
+    const modal = document.getElementById('bulk-history-modal');
+    if (modal) modal.classList.remove('active');
+}
+
+function toggleBulkHistoryModeUI() {
+    const isEnable = document.querySelector('input[name="bulk-daq-state"]:checked')?.value === 'enable';
+    const optBox = document.getElementById('bulk-daq-options');
+    if (optBox) {
+        optBox.style.opacity = isEnable ? '1' : '0.4';
+        optBox.style.pointerEvents = isEnable ? 'auto' : 'none';
+    }
+}
+
+async function submitBulkHistory() {
+    const btn = document.getElementById('btn-apply-bulk-history');
+    const resBox = document.getElementById('bulk-history-results');
+    const plantId = parseInt(document.getElementById('bulk-history-plant')?.value || '9', 10);
+    const enabled = document.querySelector('input[name="bulk-daq-state"]:checked')?.value === 'enable';
+    const mode = document.querySelector('input[name="bulk-daq-mode"]:checked')?.value || 'change';
+    const interval = parseInt(document.getElementById('bulk-daq-interval')?.value || '60', 10);
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Applying DAQ Settings...';
+    }
+
+    try {
+        const resp = await fetch(`/api/storage/${plantId}/bulk-history`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                enabled: enabled,
+                mode: mode,
+                interval: interval,
+                restart: true
+            })
+        });
+
+        const data = await resp.json();
+        if (resBox) {
+            resBox.style.display = 'block';
+            if (data.success && data.report) {
+                const rep = data.report;
+                resBox.style.background = 'rgba(16, 185, 129, 0.12)';
+                resBox.style.border = '1px solid #10b981';
+                resBox.style.color = '#a7f3d0';
+                resBox.innerHTML = `
+                    <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 6px;">
+                        ✓ Bulk Historical DAQ Applied Successfully!
+                    </div>
+                    <div>• <strong>Historical State:</strong> ${rep.enabled ? 'ENABLED' : 'DISABLED'}</div>
+                    <div>• <strong>Mode:</strong> ${rep.mode.toUpperCase()} ${rep.mode === 'interval' ? `(${rep.interval_seconds}s)` : ''}</div>
+                    <div>• <strong>Devices Affected:</strong> ${rep.total_devices_affected}</div>
+                    <div>• <strong>Total Tags Updated:</strong> ${rep.total_tags_updated}</div>
+                    <div style="margin-top: 6px; font-size: 0.75rem; color: #6ee7b7;">
+                        Storage Server on Plant ${plantId} reloaded and actively logging to InfluxDB.
+                    </div>
+                `;
+            } else {
+                resBox.style.background = 'rgba(239, 68, 68, 0.12)';
+                resBox.style.border = '1px solid #ef4444';
+                resBox.style.color = '#fca5a5';
+                resBox.innerHTML = `❌ Failed: ${data.detail || data.error || 'Unknown error'}`;
+            }
+        }
+    } catch (err) {
+        if (resBox) {
+            resBox.style.display = 'block';
+            resBox.style.background = 'rgba(239, 68, 68, 0.12)';
+            resBox.style.border = '1px solid #ef4444';
+            resBox.style.color = '#fca5a5';
+            resBox.innerHTML = `❌ Network Error: ${err.message}`;
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '🚀 Apply Bulk History (DAQ)';
+        }
     }
 }
 
