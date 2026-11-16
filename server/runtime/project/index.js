@@ -364,8 +364,19 @@ function removeView(view) {
     for (var i = 0; i < data.hmi.views.length; i++) {
         if (data.hmi.views[i].id === view.id) {
             data.hmi.views.splice(i, 1);
-            return true;
+            pos = i;
+            break;
         }
+    }
+    if (pos >= 0) {
+        // If the removed view was the designated start view, reassign layout.start
+        if (data.hmi.layout && data.hmi.layout.start === view.id) {
+            data.hmi.layout.start = data.hmi.views.length > 0 ? data.hmi.views[0].id : null;
+            prjstorage.setSection({ table: prjstorage.TableType.GENERAL, name: 'layout', value: data.hmi.layout }).catch(err => {
+                logger.error(`project.remove-view failed to update layout.start: ${err}`);
+            });
+        }
+        return true;
     }
     return false;
 }
