@@ -141,6 +141,32 @@ def backup_database(db_path):
     shutil.copy2(db_path, dest)
     print(f"[🛡️] Created pre-modification backup: {dest}")
 
+def disable_device(conn, name_or_id, enable=False):
+    cur = conn.cursor()
+    cur.execute("SELECT name, value FROM devices;")
+    rows = cur.fetchall()
+
+    found = False
+    for r in rows:
+        did = r[0]
+        try:
+            val = json.loads(r[1])
+            dname = val.get("name", did)
+        except Exception:
+            continue
+
+        if did == name_or_id or dname.lower() == name_or_id.lower():
+            val["enabled"] = enable
+            cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(val), did))
+            conn.commit()
+            action = "Enabled" if enable else "Disabled"
+            print(f"[✓] Successfully {action} device '{dname}' (ID: {did}).")
+            found = True
+
+    if not found:
+        print(f"[X] Device '{name_or_id}' not found.")
+    return found
+
 def remove_device_by_name(conn, device_name):
     cur = conn.cursor()
     cur.execute("SELECT name, value FROM devices;")
@@ -305,6 +331,8 @@ def main():
     parser.add_argument("--dedup", action="store_true", help="Automatically remove duplicate devices (keeps device with tags)")
     parser.add_argument("--remove", type=str, help="Remove device by ID")
     parser.add_argument("--remove-name", type=str, help="Remove or dedup device by its displayed Name (e.g. 'Gas_Flow_Modbus')")
+    parser.add_argument("--disable", type=str, help="Disable a device by Name or ID so FUXA does not poll it")
+    parser.add_argument("--enable", type=str, help="Enable a previously disabled device by Name or ID")
     parser.add_argument("--rename", nargs=2, metavar=("DEVICE_ID", "NEW_NAME"), help="Rename device by ID to NEW_NAME")
 
     args = parser.parse_args()
@@ -342,6 +370,12 @@ def main():
             list_devices(conn)
         elif args.remove_name:
             remove_device_by_name(conn, args.remove_name)
+            list_devices(conn)
+        elif args.disable:
+            disable_device(conn, args.disable, enable=False)
+            list_devices(conn)
+        elif args.enable:
+            disable_device(conn, args.enable, enable=True)
             list_devices(conn)
         elif args.rename:
             rename_device(conn, args.rename[0], args.rename[1])
