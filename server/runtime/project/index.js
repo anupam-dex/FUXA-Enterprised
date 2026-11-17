@@ -71,7 +71,24 @@ function load() {
             // load views
             prjstorage.getSection(prjstorage.TableType.VIEWS).then(vrows => {
                 for (var iv = 0; iv < vrows.length; iv++) {
-                    data.hmi.views.push(JSON.parse(vrows[iv].value));
+                    try {
+                        data.hmi.views.push(JSON.parse(vrows[iv].value));
+                    } catch (e) {
+                        logger.error(`project.prjstorage-failed-to-load! view '${vrows[iv].name}' ${e}`);
+                    }
+                }
+                var layoutMissing = !data.hmi.layout || !data.hmi.layout.navigation;
+                _ensureValidHmi(data);
+                if (typeof prjstorage.setSection === 'function') {
+                    if (layoutMissing) {
+                        prjstorage.setSection({ table: prjstorage.TableType.GENERAL, name: ProjectDataCmdType.HmiLayout, value: data.hmi.layout }).catch(() => {});
+                    }
+                    for (var iv2 = 0; iv2 < data.hmi.views.length; iv2++) {
+                        var v2 = data.hmi.views[iv2];
+                        if (v2 && v2.id) {
+                            prjstorage.setSection({ table: prjstorage.TableType.VIEWS, name: v2.id, value: v2 }).catch(() => {});
+                        }
+                    }
                 }
                 // load devices
                 prjstorage.getSection(prjstorage.TableType.DEVICES).then(drows => {
@@ -1174,8 +1191,62 @@ function getProjectDemo() {
     return JSON.parse(fs.readFileSync(demoProject, 'utf8'));;
 }
 
+function _ensureValidHmi(result) {
+    if (!result) return;
+    if (!result.hmi || typeof result.hmi !== 'object') {
+        result.hmi = { views: [], layout: {} };
+    }
+    if (!Array.isArray(result.hmi.views)) {
+        result.hmi.views = [];
+    }
+    if (!result.hmi.layout || typeof result.hmi.layout !== 'object') {
+        result.hmi.layout = {};
+    }
+    if (!result.hmi.layout.navigation || typeof result.hmi.layout.navigation !== 'object') {
+        result.hmi.layout.navigation = { mode: 'none', items: [] };
+    }
+    if (!Array.isArray(result.hmi.layout.navigation.items)) {
+        result.hmi.layout.navigation.items = [];
+    }
+    if (!result.hmi.layout.header || typeof result.hmi.layout.header !== 'object') {
+        result.hmi.layout.header = { items: [] };
+    }
+    if (!Array.isArray(result.hmi.layout.header.items)) {
+        result.hmi.layout.header.items = [];
+    }
+    if (result.hmi.layout.loginonstart === undefined) {
+        result.hmi.layout.loginonstart = false;
+    }
+    if (!result.hmi.layout.zoom) {
+        result.hmi.layout.zoom = 'autoresize';
+    }
+
+    // Ensure every view is valid and has svgcontent
+    for (var i = 0; i < result.hmi.views.length; i++) {
+        var v = result.hmi.views[i];
+        if (!v || typeof v !== 'object') continue;
+        if (!v.profile || typeof v.profile !== 'object') {
+            v.profile = { width: 1920, height: 1080, bkcolor: '#12171f', margin: 10 };
+        }
+        if (!v.profile.width) v.profile.width = 1920;
+        if (!v.profile.height) v.profile.height = 1080;
+        if (!v.profile.bkcolor) v.profile.bkcolor = '#12171f';
+        if (!v.type) v.type = 'svg';
+        if (!v.items || typeof v.items !== 'object') v.items = {};
+        if (!Array.isArray(v.variables)) v.variables = [];
+        if (!v.svgcontent || typeof v.svgcontent !== 'string' || v.svgcontent.trim().length === 0) {
+            v.svgcontent = '<svg id="' + (v.name || v.id || 'MainView') + '" width="' + v.profile.width + '" height="' + v.profile.height + '" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg"><filter id="blur-filter" x="-3" y="-3" width="200" height="200"><feGaussianBlur in="SourceGraphic" stdDeviation="3" /></filter><g><title>Layer 1</title></g></svg>';
+        }
+    }
+
+    if (!result.hmi.layout.start && result.hmi.views.length > 0) {
+        result.hmi.layout.start = result.hmi.views[0].id;
+    }
+}
+
 function _filterProjectPermission(userPermission, options = {}) {
     var result = JSON.parse(JSON.stringify(data));// = { devices: {}, hmi: { views: [] } };
+    _ensureValidHmi(result);
     if (options.viewId && result.hmi?.views) {
         result.hmi.views = result.hmi.views.filter(view => view.id === options.viewId || view.name === options.viewId);
     }

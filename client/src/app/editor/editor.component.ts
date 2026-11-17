@@ -200,6 +200,14 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
         }, error => {
             console.error('Error loadHMI');
         });
+        // Failsafe: Ensure editor loading spinner is never stuck indefinitely
+        setTimeout(() => {
+            if (this.isLoading) {
+                console.warn('FUXA Editor loading timeout fallback reached. Releasing UI.');
+                this.isLoading = false;
+                this.changeDetector.detectChanges();
+            }
+        }, 4000);
         this.changeDetector.detectChanges();
     }
 
@@ -342,36 +350,49 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
      * Load the hmi resource and bind it
      */
     private loadHmi(firstTime = false) {
-        this.gaugesManager.initGaugesMap();
-        this.currentView = null;
-        this.hmi = this.projectService.getHmi();
-        // check new hmi
-        if (this.hmi.views?.length <= 0) {
-            this.hmi.views = [];
-            this.addView(ProjectService.MainViewName);
-        } else {
-            let oldsel = localStorage.getItem('@frango.webeditor.currentview');
-            if (!oldsel && this.hmi.views.length) {
-                oldsel = this.hmi.views[0].name;
+        try {
+            this.gaugesManager.initGaugesMap();
+            this.currentView = null;
+            this.hmi = this.projectService.getHmi() || new Hmi();
+            if (!this.hmi.views) {
+                this.hmi.views = [];
             }
-            for (let i = 0; i < this.hmi.views.length; i++) {
-                if (this.hmi.views[i].name === oldsel && this.hmi.views[i].type !== ViewType.maps) {
-                    this.onSelectView(this.hmi.views[i]);
-                    break;
+            // check new hmi
+            if (this.hmi.views.length <= 0) {
+                this.hmi.views = [];
+                this.addView(ProjectService.MainViewName);
+            } else {
+                let oldsel = localStorage.getItem('@frango.webeditor.currentview');
+                if (!oldsel && this.hmi.views.length) {
+                    oldsel = this.hmi.views[0]?.name;
+                }
+                for (let i = 0; i < this.hmi.views.length; i++) {
+                    if (this.hmi.views[i]?.name === oldsel && this.hmi.views[i]?.type !== ViewType.maps) {
+                        this.onSelectView(this.hmi.views[i]);
+                        break;
+                    }
+                }
+                if (!this.currentView && this.hmi.views.length > 0) {
+                    this.onSelectView(this.hmi.views[0]);
                 }
             }
-            if (!this.currentView) {
-                this.onSelectView(this.hmi.views[0]);
-            }
-        }
-        this.hmi.layout = <LayoutSettings>Utils.mergeDeep(new LayoutSettings(), this.hmi.layout);
+            this.hmi.layout = <LayoutSettings>Utils.mergeDeep(new LayoutSettings(), this.hmi.layout || {});
 
-        // check and set start page
-        if (!this.hmi.layout.start) {
-            this.hmi.layout.start = this.hmi.views[0]?.id;
+            // check and set start page
+            if (!this.hmi.layout.start && this.hmi.views[0]?.id) {
+                this.hmi.layout.start = this.hmi.views[0].id;
+            }
+        } catch (e) {
+            console.error('Error during loadHmi', e);
+        } finally {
+            try {
+                this.loadPanelState();
+            } catch (err) {
+                console.warn('Failed to load panel state', err);
+            }
+            this.isLoading = false;
+            this.changeDetector.detectChanges();
         }
-        this.loadPanelState();
-        this.isLoading = false;
     }
 
     /**
