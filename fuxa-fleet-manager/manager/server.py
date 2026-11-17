@@ -436,6 +436,7 @@ def get_logs(target: str, lines: int = 100):
     return pm2_adapter.get_process_logs(target, lines=lines)
 
 @app.post("/api/project/inspect")
+@app.post("/api/project/inspect/")
 async def api_inspect_project(request: Request):
     """Parses and inspects a project.json or .fuxap payload and returns a structural summary."""
     try:
@@ -449,7 +450,8 @@ async def api_inspect_project(request: Request):
         raise HTTPException(status_code=400, detail=f"Failed to parse project JSON: {str(e)}")
 
 @app.post("/api/storage/{plant_id}/import-project")
-async def api_import_storage_project(plant_id: int, request: Request):
+@app.post("/api/storage/{plant_id}/import-project/")
+async def api_import_storage_project(plant_id: str, request: Request):
     """
     Imports a full project.json / .fuxap into the specified Plant Storage Server.
     1. Validates project payload and plant.
@@ -469,20 +471,23 @@ async def api_import_storage_project(plant_id: int, request: Request):
         pdata = body
         auto_restart = True
 
-    storage_work_dir = os.path.join(STORAGE_DIR, f"plant_{plant_id}")
+    p_clean = str(plant_id).replace("plant_", "")
+    plant_num = int(p_clean) if p_clean.isdigit() else 9
+
+    storage_work_dir = os.path.join(STORAGE_DIR, f"plant_{plant_num}")
     os.makedirs(storage_work_dir, exist_ok=True)
 
     result = import_project_to_database(
         target_work_dir=storage_work_dir,
         project_data=pdata,
         role="storage",
-        plant_id=plant_id
+        plant_id=plant_num
     )
 
     pm2_res = {"restarted": False, "status": "unchanged"}
     plants = port_engine.registry.get("plants", {})
-    p_info = plants.get(str(plant_id), {})
-    pm2_name = p_info.get("storage_pm2_name", f"P{plant_id}_Storage_Server")
+    p_info = plants.get(str(plant_num), {})
+    pm2_name = p_info.get("storage_pm2_name", f"P{plant_num}_Storage_Server")
 
     if auto_restart:
         pm2_status = pm2_adapter.get_process_status(pm2_name)
@@ -501,13 +506,14 @@ async def api_import_storage_project(plant_id: int, request: Request):
 
     return {
         "success": True,
-        "plant_id": plant_id,
+        "plant_id": plant_num,
         "details": result,
         "pm2": pm2_res,
-        "message": f"Successfully imported project into Plant {plant_id} Storage Server ({result.get('devices_count', 0)} devices, {result.get('views_count', 0)} views)."
+        "message": f"Successfully imported project into Plant {plant_num} Storage Server ({result.get('devices_count', 0)} devices, {result.get('views_count', 0)} views)."
     }
 
 @app.post("/api/instances/{instance_id}/import-project")
+@app.post("/api/instances/{instance_id}/import-project/")
 async def api_import_view_project(instance_id: str, request: Request):
     """
     Imports HMI views and screens from project.json / .fuxap into the specified View Server.
@@ -616,6 +622,26 @@ async def api_import_view_project(instance_id: str, request: Request):
         "pm2": pm2_res,
         "message": f"Successfully imported project into View Server {instance_id} ({result.get('views_count', 0)} views)."
     }
+
+@app.post("/api/import-project")
+@app.post("/api/import-project/")
+async def api_import_unified_project(request: Request):
+    """
+    Unified Import Endpoint:
+    Accepts target_type ('storage' or 'view') and delegates accordingly.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
+
+    target_type = body.get("target_type", "storage")
+    target_id = str(body.get("target_id", "9"))
+
+    if target_type == "view":
+        return await api_import_view_project(target_id, request)
+    else:
+        return await api_import_storage_project(target_id, request)
 
 # Static files for the Manager UI
 static_dir = os.path.join(os.path.dirname(__file__), "static")

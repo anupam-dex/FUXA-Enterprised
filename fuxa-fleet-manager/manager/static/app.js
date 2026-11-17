@@ -867,6 +867,25 @@ async function submitImportProject() {
             })
         });
 
+        if (res.status === 404) {
+            if (statusBox) {
+                statusBox.className = 'port-status-box error';
+                statusBox.innerHTML = `
+                    <div style="font-weight: 700; margin-bottom: 6px;">❌ Backend Route Not Found (404)</div>
+                    <div>The Fleet Manager process running on port 9000 has not reloaded the new Python backend routes yet.</div>
+                    <div style="margin-top: 8px; font-size: 0.8rem; background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px;">
+                        <strong>To fix, run on your terminal:</strong><br/>
+                        <code style="color: #79c0ff; font-weight: 700;">pm2 restart FUXA_Enterprise_Manager</code>
+                    </div>
+                `;
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🚀 Import & Apply Now';
+            }
+            return;
+        }
+
         const data = await res.json();
 
         if (res.ok && data.success) {
