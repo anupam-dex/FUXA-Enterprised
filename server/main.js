@@ -482,12 +482,25 @@ const SHELL_ROUTES = [
 
 app.use(allowCrossDomain);
 
-if (indexHtmlCache) {
-    const serveShell = (req, res) => res.type('html').send(indexHtmlCache);
+const serveShell = (req, res) => {
+    if (indexHtmlCache && (req.baseUrl || req.path || '').startsWith(BASE_PATH)) {
+        return res.type('html').send(indexHtmlCache);
+    }
+    return res.sendFile(path.join(settings.httpStatic, 'index.html'));
+};
+
+const mountShellPaths = new Set(SHELL_ROUTES);
+if (BASE_PATH) {
     for (const shellPath of SHELL_ROUTES) {
-        app.get(BASE_PATH + shellPath, serveShell);
+        mountShellPaths.add(BASE_PATH + shellPath);
     }
 }
+
+for (const shellPath of mountShellPaths) {
+    app.get(shellPath, serveShell);
+    app.use(shellPath, express.static(settings.httpStatic));
+}
+
 if (rewrittenAssets.size) {
     app.use((req, res, next) => {
         const rewritten = rewrittenAssets.get(req.path);
@@ -495,14 +508,17 @@ if (rewrittenAssets.size) {
     });
 }
 
-for (const shellPath of SHELL_ROUTES) {
-    app.use(BASE_PATH + shellPath, express.static(settings.httpStatic));
-}
 // while paths that have to serve non-angular paths are here
-app.use(BASE_PATH + '/' + settings.httpUploadFileStatic, express.static(settings.uploadFileDir));
-app.use(BASE_PATH + '/_images', express.static(settings.imagesFileDir));
-app.use(BASE_PATH + '/_widgets', express.static(settings.widgetsFileDir));
-app.use(BASE_PATH + '/snapshots', snapshotAuth, express.static(settings.webcamSnapShotsDir));
+if (BASE_PATH) {
+    app.use(BASE_PATH + '/' + settings.httpUploadFileStatic, express.static(settings.uploadFileDir));
+    app.use(BASE_PATH + '/_images', express.static(settings.imagesFileDir));
+    app.use(BASE_PATH + '/_widgets', express.static(settings.widgetsFileDir));
+    app.use(BASE_PATH + '/snapshots', snapshotAuth, express.static(settings.webcamSnapShotsDir));
+}
+app.use('/' + settings.httpUploadFileStatic, express.static(settings.uploadFileDir));
+app.use('/_images', express.static(settings.imagesFileDir));
+app.use('/_widgets', express.static(settings.widgetsFileDir));
+app.use('/snapshots', snapshotAuth, express.static(settings.webcamSnapShotsDir));
 
 var accessLogStream = fs.createWriteStream(settings.logDir + '/api.log', { flags: 'a' });
 if (runtime.settings.logApiLevel !== 'none') {
@@ -618,7 +634,10 @@ function startFuxa() {
             }
 
             if (settings.disableServer !== false) {
-                app.use(BASE_PATH + '/', FUXA.httpApi);
+                if (BASE_PATH) {
+                    app.use(BASE_PATH + '/', FUXA.httpApi);
+                }
+                app.use('/', FUXA.httpApi);
             }
 
             server.listen(settings.uiPort, settings.uiHost, function () {

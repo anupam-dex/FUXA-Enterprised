@@ -70,7 +70,7 @@ class PM2Adapter:
             cmd.append("--disablePlugins")
 
         env = os.environ.copy()
-        if subpath:
+        if subpath and os.environ.get("FUXA_USE_SUBPATH_ROUTING") == "true":
             env["BASE_PATH"] = subpath
         env["FUXA_ROLE"] = role
         if role == "view":
