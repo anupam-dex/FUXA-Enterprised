@@ -256,6 +256,9 @@
                             <option value="3">Plant 3 - Body & Assembly (Storage :5301)</option>
                             <option value="4">Plant 4 - Powertrain & Engine (Storage :5401)</option>
                         </select>
+                        <div id="notice-import-storage" style="margin-top: 8px; font-size: 0.78rem; color: #7ee787; background: rgba(46, 160, 67, 0.1); border: 1px solid rgba(46, 160, 67, 0.25); border-radius: 4px; padding: 6px 10px;">
+                            ⚡ <strong>Devices Only Mode:</strong> All views, screens, and graphics are skipped. Only unique PLC driver devices & tags are imported with strict deduplication.
+                        </div>
                     </div>
 
                     <!-- View Dropdown -->
@@ -263,6 +266,9 @@
                         <select id="sel-import-view" style="width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid var(--border-color); color: #fff; border-radius: 6px; font-family: var(--font-mono);">
                             <!-- Populated dynamically from cached instances -->
                         </select>
+                        <div id="notice-import-view" style="margin-top: 8px; font-size: 0.78rem; color: #79c0ff; background: rgba(56, 139, 253, 0.1); border: 1px solid rgba(56, 139, 253, 0.25); border-radius: 4px; padding: 6px 10px;">
+                            🖥️ <strong>HMI Views Mode:</strong> Imports all screens, SVGs & layout for operators. Preserves the zero-driver OPC-UA bridge to central storage.
+                        </div>
                     </div>
                 </div>
 

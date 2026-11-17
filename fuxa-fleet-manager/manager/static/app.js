@@ -695,10 +695,18 @@ function onImportTargetTypeChange() {
     const gStorage = document.getElementById('group-import-storage');
     const gView = document.getElementById('group-import-view');
     const gMode = document.getElementById('group-view-mode');
+    const nStorage = document.getElementById('notice-import-storage');
+    const nView = document.getElementById('notice-import-view');
 
     if (gStorage) gStorage.style.display = isView ? 'none' : 'block';
     if (gView) gView.style.display = isView ? 'block' : 'none';
     if (gMode) gMode.style.display = isView ? 'block' : 'none';
+    if (nStorage) nStorage.style.display = isView ? 'none' : 'block';
+    if (nView) nView.style.display = isView ? 'block' : 'none';
+
+    if (currentImportProjectData) {
+        renderInspectBox(currentImportProjectData);
+    }
 }
 
 function setupDropzone() {
@@ -773,15 +781,44 @@ function renderInspectBox(data) {
     if (!box) return;
     box.style.display = 'block';
 
+    const rView = document.getElementById('radio-import-view');
+    const isView = rView ? rView.checked : false;
+
     const title = data.name || (data.general && data.general.title) || 'FUXA Project';
     const version = data.version || '1.00';
 
-    // Devices
+    // Devices & deduplication preview
     let devs = data.devices || {};
     let devList = Array.isArray(devs) ? devs : Object.values(devs);
-    let devNames = devList.map(d => d.name || d.id || 'Unnamed Device');
-    let totalTags = 0;
+    
+    // Server device
+    if (data.server && typeof data.server === 'object') {
+        const hasSrv = devList.some(d => d && (d.id === '0' || d.id === 'server' || d.type === 'FuxaServer'));
+        if (!hasSrv) devList.unshift(data.server);
+    }
+
+    const byNorm = {};
     devList.forEach(d => {
+        if (!d || !d.id) return;
+        const norm = (d.name || d.id).trim().toLowerCase();
+        if (!byNorm[norm]) byNorm[norm] = [];
+        byNorm[norm].push(d);
+    });
+
+    const uniqueDevs = [];
+    const duplicates = [];
+    Object.keys(byNorm).forEach(norm => {
+        const group = byNorm[norm];
+        uniqueDevs.push(group[0]);
+        if (group.length > 1) {
+            for (let i = 1; i < group.length; i++) {
+                duplicates.push(group[i].name || group[i].id);
+            }
+        }
+    });
+
+    let totalTags = 0;
+    uniqueDevs.forEach(d => {
         if (d && d.tags) {
             totalTags += Array.isArray(d.tags) ? d.tags.length : Object.keys(d.tags).length;
         }
@@ -792,26 +829,54 @@ function renderInspectBox(data) {
     let viewList = Array.isArray(views) ? views : Object.values(views);
     let viewNames = viewList.map(v => v.name || v.id || 'Unnamed Screen');
 
-    box.innerHTML = `
-        <div class="inspect-header">
-            <div>
-                <strong style="color: #fff; font-size: 0.95rem;">${title}</strong>
-                <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 6px;">(v${version})</span>
+    if (!isView) {
+        // Storage Server Mode: Devices Only
+        box.innerHTML = `
+            <div class="inspect-header">
+                <div>
+                    <strong style="color: #fff; font-size: 0.95rem;">${title}</strong>
+                    <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 6px;">(v${version})</span>
+                </div>
+                <span class="badge badge-storage">STORAGE: DEVICES ONLY</span>
             </div>
-            <span class="badge badge-online">VALID FUXA PROJECT</span>
-        </div>
-        <div class="inspect-pills">
-            <span class="inspect-pill" style="color: var(--accent-storage);">🔌 <strong>${devNames.length}</strong> Devices</span>
-            <span class="inspect-pill" style="color: var(--accent-cyan);">📊 <strong>${totalTags.toLocaleString()}</strong> Tags</span>
-            <span class="inspect-pill" style="color: #7ee787;">🖥️ <strong>${viewNames.length}</strong> HMI Views</span>
-        </div>
-        ${viewNames.length > 0 ? `
-            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Detected Views:</div>
+            <div class="inspect-pills">
+                <span class="inspect-pill" style="color: var(--accent-storage);">🔌 <strong>${uniqueDevs.length}</strong> Unique Devices</span>
+                <span class="inspect-pill" style="color: var(--accent-cyan);">📊 <strong>${totalTags.toLocaleString()}</strong> Tags</span>
+                <span class="inspect-pill" style="color: #8b949e;">⏭️ <strong>${viewNames.length}</strong> Screens (Skipped)</span>
+            </div>
+            ${duplicates.length > 0 ? `
+                <div style="font-size: 0.78rem; color: #ffab70; background: rgba(255, 171, 112, 0.1); border: 1px solid rgba(255, 171, 112, 0.25); border-radius: 4px; padding: 6px 10px; margin-bottom: 8px;">
+                    🛡️ <strong>${duplicates.length} duplicate device(s) detected and will be skipped:</strong> ${duplicates.join(', ')}
+                </div>
+            ` : ''}
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Devices to be imported into Storage:</div>
             <div class="inspect-chips">
-                ${viewNames.map(name => `<span class="view-chip">${name}</span>`).join('')}
+                ${uniqueDevs.map(d => `<span class="view-chip" style="background: rgba(46, 160, 67, 0.15); border-color: rgba(46, 160, 67, 0.3); color: #7ee787;">${d.name || d.id}</span>`).join('')}
             </div>
-        ` : ''}
-    `;
+        `;
+    } else {
+        // View Server Mode: Views & Layout
+        box.innerHTML = `
+            <div class="inspect-header">
+                <div>
+                    <strong style="color: #fff; font-size: 0.95rem;">${title}</strong>
+                    <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 6px;">(v${version})</span>
+                </div>
+                <span class="badge badge-view">VIEW: HMI SCREENS</span>
+            </div>
+            <div class="inspect-pills">
+                <span class="inspect-pill" style="color: #7ee787;">🖥️ <strong>${viewNames.length}</strong> HMI Views</span>
+                <span class="inspect-pill" style="color: var(--accent-cyan);">🌉 Central OPC-UA Bridge</span>
+                <span class="inspect-pill" style="color: #8b949e;">🚫 Zero Direct PLCs</span>
+            </div>
+            ${viewNames.length > 0 ? `
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">HMI Screens to be imported:</div>
+                <div class="inspect-chips">
+                    ${viewNames.map(name => `<span class="view-chip">${name}</span>`).join('')}
+                </div>
+            ` : ''}
+        `;
+    }
 }
 
 async function submitImportProject() {
@@ -892,21 +957,35 @@ async function submitImportProject() {
             if (statusBox) {
                 statusBox.className = 'port-status-box success';
                 const details = data.details || {};
-                statusBox.innerHTML = `
-                    <div style="font-weight: 700; margin-bottom: 4px;">&#10003; Project Successfully Imported!</div>
-                    <div>Target: <strong>${targetDesc}</strong></div>
-                    <div>Screens Imported: <strong>${details.views_count || 0} views</strong> | Devices: <strong>${details.devices_count || 0}</strong></div>
-                    ${details.backup_path ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">🛡️ Pre-backup: <code>${details.backup_path}</code></div>` : ''}
-                    ${data.pm2 && data.pm2.restarted ? `<div style="font-size: 0.78rem; color: #7ee787; margin-top: 4px;">📢 PM2 process reloaded live successfully!</div>` : ''}
-                `;
+                if (!isView) {
+                    // Storage Server details (Devices Only)
+                    statusBox.innerHTML = `
+                        <div style="font-weight: 700; margin-bottom: 4px;">&#10003; Devices Successfully Imported!</div>
+                        <div>Target: <strong>${targetDesc}</strong></div>
+                        <div>Unique Devices Loaded: <strong>${details.devices_count || 0}</strong> | Total Tags: <strong>${(details.tags_count || 0).toLocaleString()}</strong></div>
+                        ${details.skipped_duplicates_count > 0 ? `<div style="color: #ffab70; font-size: 0.8rem; margin-top: 4px;">🛡️ Skipped <strong>${details.skipped_duplicates_count} duplicate device(s)</strong>: ${details.skipped_duplicates.join(', ')}</div>` : ''}
+                        <div style="color: var(--text-muted); font-size: 0.78rem; margin-top: 2px;">⏭️ All HMI screens and views were skipped (Storage Server is dedicated PLC gateway).</div>
+                        ${details.backup_path ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">🛡️ Pre-backup: <code>${details.backup_path}</code></div>` : ''}
+                        ${data.pm2 && data.pm2.restarted ? `<div style="font-size: 0.78rem; color: #7ee787; margin-top: 4px;">📢 PM2 process reloaded live successfully!</div>` : ''}
+                    `;
+                } else {
+                    // View Server details (Views & Layout)
+                    statusBox.innerHTML = `
+                        <div style="font-weight: 700; margin-bottom: 4px;">&#10003; HMI Screens Successfully Imported!</div>
+                        <div>Target: <strong>${targetDesc}</strong></div>
+                        <div>Screens Loaded: <strong>${details.views_count || 0} views</strong> | Bridge: <strong>Central Storage OPC-UA</strong></div>
+                        ${details.backup_path ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">🛡️ Pre-backup: <code>${details.backup_path}</code></div>` : ''}
+                        ${data.pm2 && data.pm2.restarted ? `<div style="font-size: 0.78rem; color: #7ee787; margin-top: 4px;">📢 PM2 process reloaded live successfully!</div>` : ''}
+                    `;
+                }
             }
             if (btn) btn.textContent = '✓ Import Complete';
 
             setTimeout(() => {
                 closeImportModal();
-                showAlert(`<strong>&#10003; Project Imported Successfully!</strong><br/>Loaded into ${targetDesc}.`);
+                showAlert(`<strong>&#10003; Import Complete!</strong><br/>${data.message || 'Target database updated successfully.'}`);
                 loadMatrix();
-            }, 1800);
+            }, 2000);
         } else {
             if (statusBox) {
                 statusBox.className = 'port-status-box error';

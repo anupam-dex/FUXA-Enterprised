@@ -171,7 +171,11 @@ def main():
 
     print(f"\n[i] Target Role: {role.upper()}")
     print(f"[i] Target Directory: {target_work_dir}")
-    if role == "view":
+    if role == "storage":
+        print(f"[i] Policy: DEVICES ONLY (All HMI views, screens & graphics are strictly skipped)")
+        print(f"[i] Deduplication: STRICT (Resolves duplicate names & IDs automatically)")
+    elif role == "view":
+        print(f"[i] Policy: HMI VIEWS & SCREENS")
         print(f"[i] Bridge Mode: {'YES (opc.tcp://127.0.0.1:4840)' if args.preserve_bridge else 'NO (Direct PLCs)'}")
 
     # Perform Import
@@ -190,8 +194,15 @@ def main():
 
     print(f"[✓] Successfully imported project into {role.upper()} database:")
     print(f"    • Database: {res['db_path']}")
-    print(f"    • Devices: {res['devices_count']} {res.get('device_names', [])[:4]}")
-    print(f"    • Views: {res['views_count']} {res.get('view_names', [])[:6]}")
+    print(f"    • Unique Devices: {res['devices_count']} {res.get('device_names', [])[:6]}")
+    if res.get("skipped_duplicates"):
+        print(f"    • 🛡️ Skipped Duplicate Devices ({len(res['skipped_duplicates'])}):")
+        for dup in res["skipped_duplicates"]:
+            print(f"        - {dup}")
+    if role == "storage":
+        print(f"    • HMI Screens: SKIPPED ({res.get('skipped_views_count', 0)} screens omitted from Storage Server)")
+    else:
+        print(f"    • Views Imported: {res['views_count']} {res.get('view_names', [])[:6]}")
     if res.get("tags_count"):
         print(f"    • Total Tags: {res['tags_count']}")
 

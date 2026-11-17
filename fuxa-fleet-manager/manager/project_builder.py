@@ -3,6 +3,9 @@
 FUXA Project Builder & Importer
 - Pre-provisions SQLite database (project.fuxap.db) for new view servers.
 - Imports FUXA project.json / .fuxap exports directly into Storage or View servers.
+- Role-Specific Rules:
+  * Storage Server: Imports ONLY unique devices & tags. Strictly skips all views/screens and removes duplicates.
+  * View Server: Imports HMI screens, SVGs & layout. Preserves zero-driver OPC-UA Storage bridge.
 - Provides pre-import backup and schema validation.
 """
 
@@ -96,9 +99,71 @@ def generate_fuxa_database(target_dir: str, plant_id: int, division_name: str, l
 
     # Also keep a copy at target_dir/project.fuxap.db for direct fallback
     root_db = os.path.join(target_dir, "project.fuxap.db")
-    shutil.copy2(db_path, root_db)
+    try:
+        shutil.copy2(db_path, root_db)
+    except Exception:
+        pass
 
     return db_path
+
+
+def dedup_device_candidates(dev_list):
+    """
+    Strictly deduplicates device definitions:
+    1. Normalizes device names (strip whitespace, case-insensitive comparison).
+    2. Groups copies by normalized name.
+    3. For duplicate names, sorts by tags count descending and retains ONLY the copy with the most tags.
+    4. Ensures device IDs are completely unique.
+    Returns (final_devices, skipped_duplicates).
+    """
+    candidates = []
+    for dev in dev_list:
+        if not isinstance(dev, dict):
+            continue
+        d_id = dev.get("id")
+        if not d_id:
+            continue
+        d_name = dev.get("name", d_id).strip()
+        tags = dev.get("tags", {})
+        tags_count = len(tags) if isinstance(tags, (dict, list)) else 0
+        candidates.append({
+            "id": d_id,
+            "name": d_name,
+            "tags_count": tags_count,
+            "data": dev
+        })
+
+    # Group by normalized name
+    by_norm_name = {}
+    for c in candidates:
+        norm = c["name"].strip().lower()
+        by_norm_name.setdefault(norm, []).append(c)
+
+    deduped = []
+    skipped = []
+
+    for norm, group in by_norm_name.items():
+        if len(group) == 1:
+            deduped.append(group[0])
+        else:
+            # Sort by tags_count descending: keep the copy with the most configured tags
+            group.sort(key=lambda x: x["tags_count"], reverse=True)
+            keeper = group[0]
+            deduped.append(keeper)
+            for dup in group[1:]:
+                skipped.append(f"{dup['name']} (ID: {dup['id']}, tags: {dup['tags_count']})")
+
+    # Also deduplicate by ID in case different names had the same ID
+    seen_ids = set()
+    final_devices = []
+    for d in deduped:
+        if d["id"] not in seen_ids:
+            seen_ids.add(d["id"])
+            final_devices.append(d)
+        else:
+            skipped.append(f"{d['name']} (Duplicate ID: {d['id']})")
+
+    return final_devices, skipped
 
 
 def inspect_project_data(project_data: dict) -> dict:
@@ -125,22 +190,19 @@ def inspect_project_data(project_data: dict) -> dict:
     else:
         dev_list = []
 
-    dev_names = []
-    total_tags = 0
-    for d in dev_list:
-        if isinstance(d, dict):
-            name = d.get("name") or d.get("id") or "Unnamed Device"
-            dev_names.append(name)
-            tags = d.get("tags", {})
-            if isinstance(tags, (dict, list)):
-                total_tags += len(tags)
-
     # Check top-level server device
-    has_server = "server" in project_data and isinstance(project_data["server"], dict)
-    if has_server:
-        s_name = project_data["server"].get("name", "FUXA Server")
-        if s_name not in dev_names:
-            dev_names.append(s_name)
+    if "server" in project_data and isinstance(project_data["server"], dict):
+        srv = project_data["server"]
+        has_srv = any(d.get("id") in ("0", "server") or d.get("type") == "FuxaServer" for d in dev_list if isinstance(d, dict))
+        if not has_srv:
+            if not srv.get("id"):
+                srv["id"] = "0"
+            dev_list.insert(0, srv)
+
+    deduped_devs, skipped_devs = dedup_device_candidates(dev_list)
+
+    dev_names = [d["name"] for d in deduped_devs]
+    total_tags = sum(d["tags_count"] for d in deduped_devs)
 
     # Extract views
     views = []
@@ -177,6 +239,8 @@ def inspect_project_data(project_data: dict) -> dict:
         "version": version,
         "devices_count": len(dev_names),
         "device_names": dev_names,
+        "duplicate_devices_skipped": len(skipped_devs),
+        "skipped_device_names": skipped_devs,
         "tags_count": total_tags,
         "views_count": len(view_names),
         "view_names": view_names,
@@ -184,7 +248,7 @@ def inspect_project_data(project_data: dict) -> dict:
         "scripts_count": scripts_cnt,
         "texts_count": texts_cnt,
         "recipes_count": recipes_cnt,
-        "has_server": has_server
+        "has_server": any(d["id"] in ("0", "server") for d in deduped_devs)
     }
 
 
@@ -198,16 +262,17 @@ def import_project_to_database(
     backup_dir: str = None
 ) -> dict:
     """
-    Imports a full FUXA project into the target server's SQLite database.
+    Imports a FUXA project into the target server's SQLite database according to its role:
 
-    Args:
-        target_work_dir: Base directory for the instance (e.g. locations/storage/plant_9)
-        project_data: Parsed dictionary from project.json / .fuxap
-        role: "storage" or "view"
-        plant_id: Associated plant number (default 9)
-        preserve_bridge: For view servers, maintain the zero-driver OPC-UA bridge device
-        opcua_endpoint: Target OPC-UA server address for the bridge
-        backup_dir: Directory where pre-import backup is stored
+    ROLE = "storage":
+      - Imports ONLY unique devices & tags.
+      - Strictly deduplicates devices (by normalized name & ID).
+      - SKIPS all views, screens, widgets, layouts, alarms, scripts to keep storage lean.
+      - Sets a clean default overview view.
+
+    ROLE = "view":
+      - Imports HMI views, screens, SVGs, layouts, texts.
+      - Preserves zero-driver OPC-UA Storage bridge device (opc.tcp://127.0.0.1:4840).
     """
     appdata_dir = os.path.join(target_work_dir, "_appdata")
     os.makedirs(appdata_dir, exist_ok=True)
@@ -247,139 +312,10 @@ def import_project_to_database(
     for t in FUXA_TABLES:
         cur.execute(f"DELETE FROM {t};")
 
-    # 3. Import Views
-    hmi = project_data.get("hmi", {})
-    views = []
-    if isinstance(hmi, dict) and "views" in hmi:
-        views = hmi["views"]
-    elif "views" in project_data:
-        views = project_data["views"]
-
-    if isinstance(views, dict):
-        view_list = list(views.values())
-    elif isinstance(views, list):
-        view_list = views
-    else:
-        view_list = []
-
-    imported_views = []
-    for v in view_list:
-        if not isinstance(v, dict):
-            continue
-        v_id = v.get("id") or f"view_{len(imported_views)}"
-        v_name = v.get("name", v_id)
-        cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (v_id, json.dumps(v)))
-        imported_views.append(v_name)
-
-    # 4. Import General Settings & HMI Layout
-    if isinstance(hmi, dict):
-        for hk, hv in hmi.items():
-            if hk != "views":
-                cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", (hk, json.dumps(hv)))
-
-    reserved_top_keys = {
-        "devices", "hmi", "server", "texts", "alarms", "recipes",
-        "notifications", "scripts", "reports", "mapsLocations", "ar", "views"
-    }
-    for k, v in project_data.items():
-        if k not in reserved_top_keys:
-            cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", (k, json.dumps(v)))
-
-    # 5. Import Texts
-    texts = project_data.get("texts", [])
-    if isinstance(texts, dict):
-        texts = list(texts.values())
-    if isinstance(texts, list):
-        for item in texts:
-            if isinstance(item, dict):
-                t_name = item.get("name") or item.get("id")
-                if t_name:
-                    cur.execute("INSERT OR REPLACE INTO texts (name, value) VALUES (?, ?);", (t_name, json.dumps(item)))
-
-    # 6. Import Alarms
-    alarms = project_data.get("alarms", [])
-    if isinstance(alarms, dict):
-        alarms = list(alarms.values())
-    if isinstance(alarms, list):
-        for item in alarms:
-            if isinstance(item, dict):
-                a_name = item.get("name") or item.get("id")
-                if a_name:
-                    cur.execute("INSERT OR REPLACE INTO alarms (name, value) VALUES (?, ?);", (a_name, json.dumps(item)))
-
-    # 7. Import Recipes
-    recipes = project_data.get("recipes", [])
-    if isinstance(recipes, dict):
-        recipes = list(recipes.values())
-    if isinstance(recipes, list):
-        for item in recipes:
-            if isinstance(item, dict):
-                r_id = item.get("id") or item.get("name")
-                if r_id:
-                    cur.execute("INSERT OR REPLACE INTO recipes (name, value) VALUES (?, ?);", (r_id, json.dumps(item)))
-
-    # 8. Import Notifications
-    notifs = project_data.get("notifications", [])
-    if isinstance(notifs, dict):
-        notifs = list(notifs.values())
-    if isinstance(notifs, list):
-        for item in notifs:
-            if isinstance(item, dict):
-                n_id = item.get("id") or item.get("name")
-                if n_id:
-                    cur.execute("INSERT OR REPLACE INTO notifications (name, value) VALUES (?, ?);", (n_id, json.dumps(item)))
-
-    # 9. Import Scripts
-    scripts = project_data.get("scripts", [])
-    if isinstance(scripts, dict):
-        scripts = list(scripts.values())
-    if isinstance(scripts, list):
-        for item in scripts:
-            if isinstance(item, dict):
-                s_id = item.get("id") or item.get("name")
-                if s_id:
-                    cur.execute("INSERT OR REPLACE INTO scripts (name, value) VALUES (?, ?);", (s_id, json.dumps(item)))
-
-    # 10. Import Reports
-    reports = project_data.get("reports", [])
-    if isinstance(reports, dict):
-        reports = list(reports.values())
-    if isinstance(reports, list):
-        for item in reports:
-            if isinstance(item, dict):
-                rp_id = item.get("id") or item.get("name")
-                if rp_id:
-                    cur.execute("INSERT OR REPLACE INTO reports (name, value) VALUES (?, ?);", (rp_id, json.dumps(item)))
-
-    # 11. Import Maps Locations
-    locs = project_data.get("mapsLocations", [])
-    if isinstance(locs, dict):
-        locs = list(locs.values())
-    if isinstance(locs, list):
-        for item in locs:
-            if isinstance(item, dict):
-                l_id = item.get("id") or item.get("name")
-                if l_id:
-                    cur.execute("INSERT OR REPLACE INTO locations (name, value) VALUES (?, ?);", (l_id, json.dumps(item)))
-
-    # 12. Import AR Markers
-    ar = project_data.get("ar", {})
-    if isinstance(ar, dict) and ar:
-        markers = ar.get("markers", [])
-        ar_copy = {k: v for k, v in ar.items() if k != "markers"}
-        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('ar', ?);", (json.dumps(ar_copy),))
-        if isinstance(markers, list):
-            for m in markers:
-                if isinstance(m, dict):
-                    m_id = m.get("id") or m.get("name")
-                    if m_id:
-                        cur.execute("INSERT OR REPLACE INTO arMarkers (name, value) VALUES (?, ?);", (m_id, json.dumps(m)))
-
-    # 13. Import Devices based on Role
-    imported_devices = []
-    total_tags = 0
-
-    if role == "storage" or not preserve_bridge:
+    # -----------------------------------------------------------------
+    # BRANCH A: STORAGE SERVER (DEVICES ONLY)
+    # -----------------------------------------------------------------
+    if role == "storage":
         devs = project_data.get("devices", {})
         if isinstance(devs, list):
             dev_list = devs
@@ -388,66 +324,264 @@ def import_project_to_database(
         else:
             dev_list = []
 
-        for dev in dev_list:
-            if not isinstance(dev, dict):
-                continue
-            d_id = dev.get("id")
-            if not d_id:
-                continue
-            d_name = dev.get("name", d_id)
-            d_tags = dev.get("tags", {})
-            if isinstance(d_tags, (dict, list)):
-                total_tags += len(d_tags)
-            cur.execute("INSERT OR REPLACE INTO devices (name, value) VALUES (?, ?);", (d_id, json.dumps(dev)))
-            imported_devices.append(d_name)
-
-        # Top-level server device
+        # Server device check
         if "server" in project_data and isinstance(project_data["server"], dict):
             srv = project_data["server"]
-            s_name = srv.get("name", "FUXA Server")
-            cur.execute("INSERT OR REPLACE INTO devices (name, value) VALUES ('server', ?);", (json.dumps(srv),))
-            if s_name not in imported_devices:
-                imported_devices.append(s_name)
-    else:
-        # View Server Bridge Mode: Connect to central storage server via OPC-UA
-        bridge_id = f"dev_opcua_plant_{plant_id}"
-        bridge_name = f"Plant_{plant_id}_Storage_OPCUA"
-        bridge_dev = {
-            "id": bridge_id,
-            "name": bridge_name,
-            "type": "OPCUA",
-            "enabled": True,
-            "property": {
-                "address": opcua_endpoint,
-                "options": {
-                    "securityMode": "None",
-                    "securityPolicy": "None"
-                }
+            has_srv = any(d.get("id") in ("0", "server") or d.get("type") == "FuxaServer" for d in dev_list if isinstance(d, dict))
+            if not has_srv:
+                if not srv.get("id"):
+                    srv["id"] = "0"
+                dev_list.insert(0, srv)
+
+        final_devices, skipped_duplicates = dedup_device_candidates(dev_list)
+
+        total_tags = 0
+        imported_devices = []
+        for d in final_devices:
+            dev_obj = d["data"]
+            cur.execute("INSERT OR REPLACE INTO devices (name, value) VALUES (?, ?);", (d["id"], json.dumps(dev_obj)))
+            imported_devices.append(d["name"])
+            total_tags += d["tags_count"]
+
+        # Storage server has NO screens/views from project.json
+        # Only 1 clean default overview view
+        view_id = f"view_storage_plant_{plant_id}"
+        view_obj = {
+            "id": view_id,
+            "name": f"Plant_{plant_id}_Storage_Overview",
+            "profile": {
+                "width": 1920,
+                "height": 1080,
+                "bkcolor": "#1e222d",
+                "margin": 10
             },
-            "tags": {}
+            "items": {}
         }
-        cur.execute(
-            "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-            (bridge_id, json.dumps(bridge_dev), "opc-ua", "", "")
-        )
-        imported_devices.append(bridge_name)
+        cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(view_obj)))
 
-    conn.commit()
-    conn.close()
+        # Clean minimal general settings for storage
+        general_data = {
+            "version": "1.02",
+            "title": f"Plant {plant_id} Master Storage Server",
+            "header": {
+                "title": f"Plant {plant_id} | Master Storage (PLC Gateway)",
+                "alarms": False,
+                "login": True
+            }
+        }
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('general', ?);", (json.dumps(general_data),))
 
-    # Mirror copy for root directory fallback
-    try:
-        shutil.copy2(db_path, mirror_db_path)
-    except Exception:
-        pass
+        conn.commit()
+        conn.close()
 
-    return {
-        "success": True,
-        "db_path": db_path,
-        "backup_path": backup_file,
-        "views_count": len(imported_views),
-        "view_names": imported_views,
-        "devices_count": len(imported_devices),
-        "device_names": imported_devices,
-        "tags_count": total_tags
-    }
+        try:
+            shutil.copy2(db_path, mirror_db_path)
+        except Exception:
+            pass
+
+        raw_views = project_data.get("hmi", {}).get("views", []) if isinstance(project_data.get("hmi"), dict) else project_data.get("views", [])
+        skipped_views_count = len(raw_views) if isinstance(raw_views, (list, dict)) else 0
+
+        return {
+            "success": True,
+            "role": "storage",
+            "db_path": db_path,
+            "backup_path": backup_file,
+            "devices_count": len(imported_devices),
+            "device_names": imported_devices,
+            "tags_count": total_tags,
+            "views_count": 0,
+            "skipped_views_count": skipped_views_count,
+            "skipped_duplicates_count": len(skipped_duplicates),
+            "skipped_duplicates": skipped_duplicates,
+            "message": f"Successfully imported {len(imported_devices)} unique devices into Plant {plant_id} Storage Server. Skipped {skipped_views_count} HMI screens and {len(skipped_duplicates)} duplicate devices."
+        }
+
+    # -----------------------------------------------------------------
+    # BRANCH B: VIEW SERVER (HMI SCREENS, SVGs & LAYOUT)
+    # -----------------------------------------------------------------
+    else:
+        # 1. Import Views
+        hmi = project_data.get("hmi", {})
+        views = []
+        if isinstance(hmi, dict) and "views" in hmi:
+            views = hmi["views"]
+        elif "views" in project_data:
+            views = project_data["views"]
+
+        if isinstance(views, dict):
+            view_list = list(views.values())
+        elif isinstance(views, list):
+            view_list = views
+        else:
+            view_list = []
+
+        imported_views = []
+        for v in view_list:
+            if not isinstance(v, dict):
+                continue
+            v_id = v.get("id") or f"view_{len(imported_views)}"
+            v_name = v.get("name", v_id)
+            cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (v_id, json.dumps(v)))
+            imported_views.append(v_name)
+
+        # 2. Import General Settings & HMI Layout
+        if isinstance(hmi, dict):
+            for hk, hv in hmi.items():
+                if hk != "views":
+                    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", (hk, json.dumps(hv)))
+
+        reserved_top_keys = {
+            "devices", "hmi", "server", "texts", "alarms", "recipes",
+            "notifications", "scripts", "reports", "mapsLocations", "ar", "views"
+        }
+        for k, v in project_data.items():
+            if k not in reserved_top_keys:
+                cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", (k, json.dumps(v)))
+
+        # 3. Import Texts
+        texts = project_data.get("texts", [])
+        if isinstance(texts, dict):
+            texts = list(texts.values())
+        if isinstance(texts, list):
+            for item in texts:
+                if isinstance(item, dict):
+                    t_name = item.get("name") or item.get("id")
+                    if t_name:
+                        cur.execute("INSERT OR REPLACE INTO texts (name, value) VALUES (?, ?);", (t_name, json.dumps(item)))
+
+        # 4. Import Alarms
+        alarms = project_data.get("alarms", [])
+        if isinstance(alarms, dict):
+            alarms = list(alarms.values())
+        if isinstance(alarms, list):
+            for item in alarms:
+                if isinstance(item, dict):
+                    a_name = item.get("name") or item.get("id")
+                    if a_name:
+                        cur.execute("INSERT OR REPLACE INTO alarms (name, value) VALUES (?, ?);", (a_name, json.dumps(item)))
+
+        # 5. Import Recipes
+        recipes = project_data.get("recipes", [])
+        if isinstance(recipes, dict):
+            recipes = list(recipes.values())
+        if isinstance(recipes, list):
+            for item in recipes:
+                if isinstance(item, dict):
+                    r_id = item.get("id") or item.get("name")
+                    if r_id:
+                        cur.execute("INSERT OR REPLACE INTO recipes (name, value) VALUES (?, ?);", (r_id, json.dumps(item)))
+
+        # 6. Import Notifications
+        notifs = project_data.get("notifications", [])
+        if isinstance(notifs, dict):
+            notifs = list(notifs.values())
+        if isinstance(notifs, list):
+            for item in notifs:
+                if isinstance(item, dict):
+                    n_id = item.get("id") or item.get("name")
+                    if n_id:
+                        cur.execute("INSERT OR REPLACE INTO notifications (name, value) VALUES (?, ?);", (n_id, json.dumps(item)))
+
+        # 7. Import Scripts
+        scripts = project_data.get("scripts", [])
+        if isinstance(scripts, dict):
+            scripts = list(scripts.values())
+        if isinstance(scripts, list):
+            for item in scripts:
+                if isinstance(item, dict):
+                    s_id = item.get("id") or item.get("name")
+                    if s_id:
+                        cur.execute("INSERT OR REPLACE INTO scripts (name, value) VALUES (?, ?);", (s_id, json.dumps(item)))
+
+        # 8. Import Reports
+        reports = project_data.get("reports", [])
+        if isinstance(reports, dict):
+            reports = list(reports.values())
+        if isinstance(reports, list):
+            for item in reports:
+                if isinstance(item, dict):
+                    rp_id = item.get("id") or item.get("name")
+                    if rp_id:
+                        cur.execute("INSERT OR REPLACE INTO reports (name, value) VALUES (?, ?);", (rp_id, json.dumps(item)))
+
+        # 9. Import Maps Locations
+        locs = project_data.get("mapsLocations", [])
+        if isinstance(locs, dict):
+            locs = list(locs.values())
+        if isinstance(locs, list):
+            for item in locs:
+                if isinstance(item, dict):
+                    l_id = item.get("id") or item.get("name")
+                    if l_id:
+                        cur.execute("INSERT OR REPLACE INTO locations (name, value) VALUES (?, ?);", (l_id, json.dumps(item)))
+
+        # 10. Import AR Markers
+        ar = project_data.get("ar", {})
+        if isinstance(ar, dict) and ar:
+            markers = ar.get("markers", [])
+            ar_copy = {k: v for k, v in ar.items() if k != "markers"}
+            cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('ar', ?);", (json.dumps(ar_copy),))
+            if isinstance(markers, list):
+                for m in markers:
+                    if isinstance(m, dict):
+                        m_id = m.get("id") or m.get("name")
+                        if m_id:
+                            cur.execute("INSERT OR REPLACE INTO arMarkers (name, value) VALUES (?, ?);", (m_id, json.dumps(m)))
+
+        # 11. Devices Configuration for View Server
+        imported_devices = []
+        total_tags = 0
+
+        if preserve_bridge:
+            bridge_id = f"dev_opcua_plant_{plant_id}"
+            bridge_name = f"Plant_{plant_id}_Storage_OPCUA"
+            bridge_dev = {
+                "id": bridge_id,
+                "name": bridge_name,
+                "type": "OPCUA",
+                "enabled": True,
+                "property": {
+                    "address": opcua_endpoint,
+                    "options": {
+                        "securityMode": "None",
+                        "securityPolicy": "None"
+                    }
+                },
+                "tags": {}
+            }
+            cur.execute(
+                "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
+                (bridge_id, json.dumps(bridge_dev), "opc-ua", "", "")
+            )
+            imported_devices.append(bridge_name)
+        else:
+            devs = project_data.get("devices", {})
+            dev_list = list(devs.values()) if isinstance(devs, dict) else (devs if isinstance(devs, list) else [])
+            final_devices, _ = dedup_device_candidates(dev_list)
+            for d in final_devices:
+                cur.execute("INSERT OR REPLACE INTO devices (name, value) VALUES (?, ?);", (d["id"], json.dumps(d["data"])))
+                imported_devices.append(d["name"])
+                total_tags += d["tags_count"]
+
+        conn.commit()
+        conn.close()
+
+        try:
+            shutil.copy2(db_path, mirror_db_path)
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "role": "view",
+            "db_path": db_path,
+            "backup_path": backup_file,
+            "views_count": len(imported_views),
+            "view_names": imported_views,
+            "devices_count": len(imported_devices),
+            "device_names": imported_devices,
+            "tags_count": total_tags,
+            "message": f"Successfully imported {len(imported_views)} HMI screens into View Server."
+        }
