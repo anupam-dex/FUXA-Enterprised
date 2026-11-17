@@ -77,6 +77,7 @@ function renderStorageGrid(matrix) {
                     ? `<button onclick="stopStorage(${plant.plant_id})" class="btn btn-secondary btn-sm" style="flex:1;">Stop</button>`
                     : `<button onclick="startStorage(${plant.plant_id})" class="btn btn-primary btn-sm" style="flex:1;">Start in PM2</button>`
                 }
+                <button onclick="openImportModal('storage', '${plant.plant_id}', '${plant.name}')" class="btn btn-secondary btn-sm" title="Import project.json to Storage Server">&#128229; Import</button>
                 <button onclick="openEditPortModal('storage', '${plant.plant_id}', ${plant.storage_port}, '${plant.name}')" class="btn btn-secondary btn-sm" title="Configure Port">&#9881; Port</button>
                 <button onclick="openLogs('${plant.storage_port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
             </div>
@@ -183,6 +184,7 @@ function renderPlantGrid(matrix) {
                         <div class="instance-actions">
                             <a href="http://${getServerHost()}:${inst.port}/editor" target="_blank" class="btn btn-primary btn-sm" title="Open HMI Screen Drawing Editor">Editor</a>
                             <a href="http://${getServerHost()}:${inst.port}/home" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator Live View">View</a>
+                            <button onclick="openImportModal('view', '${inst.id}', '${inst.name}')" class="btn btn-secondary btn-sm" title="Import project.json to View Server">&#128229; Import</button>
                             <button onclick="openEditPortModal('view', '${inst.id}', ${inst.port}, '${inst.name}')" class="btn btn-secondary btn-sm" title="Configure Port">&#9881; Port</button>
                             <button onclick="openLogs('${inst.port}')" class="btn btn-secondary btn-sm" title="View PM2 Logs">&#128196; Logs</button>
                             ${isOnline 
@@ -592,5 +594,318 @@ async function submitReconfigurePort() {
         statusBox.textContent = `❌ Request failed: ${e.message}`;
         applyBtn.disabled = false;
         applyBtn.textContent = 'Apply & Run Instantly';
+    }
+}
+
+// ---------------------------------------------------------------------
+// Project Import Wizard Logic
+// ---------------------------------------------------------------------
+
+let currentImportProjectData = null;
+
+function openImportModal(targetType, targetId, targetName) {
+    const modal = document.getElementById('import-modal');
+    if (!modal) return;
+
+    // Reset file and inspect box
+    currentImportProjectData = null;
+    const fileInput = document.getElementById('file-project-input');
+    if (fileInput) fileInput.value = '';
+    
+    const inspectBox = document.getElementById('import-inspect-box');
+    if (inspectBox) {
+        inspectBox.style.display = 'none';
+        inspectBox.innerHTML = '';
+    }
+    
+    const dropzoneLabel = document.getElementById('dropzone-label');
+    if (dropzoneLabel) dropzoneLabel.textContent = 'Click to Browse or Drag & Drop project.json';
+    
+    const submitBtn = document.getElementById('btn-import-submit');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = '🚀 Import & Apply Now';
+    }
+
+    const statusBox = document.getElementById('import-status-box');
+    if (statusBox) {
+        statusBox.style.display = 'none';
+        statusBox.innerHTML = '';
+    }
+
+    // Populate View Instances Dropdown
+    const viewSelect = document.getElementById('sel-import-view');
+    if (viewSelect) {
+        viewSelect.innerHTML = '';
+        let hasViews = false;
+        cachedMatrix.forEach(plant => {
+            if (plant.instances && plant.instances.length > 0) {
+                plant.instances.forEach(inst => {
+                    hasViews = true;
+                    const opt = document.createElement('option');
+                    opt.value = inst.id;
+                    opt.textContent = `${inst.name} (Port :${inst.port} | Plant ${plant.plant_id})`;
+                    viewSelect.appendChild(opt);
+                });
+            }
+        });
+
+        if (!hasViews) {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '(No View Servers Deployed - Create one first)';
+            viewSelect.appendChild(opt);
+        }
+    }
+
+    // Set Target Selection if provided
+    if (targetType === 'view') {
+        const rView = document.getElementById('radio-import-view');
+        if (rView) rView.checked = true;
+        onImportTargetTypeChange();
+        if (targetId && viewSelect) {
+            viewSelect.value = targetId;
+        }
+    } else if (targetType === 'storage') {
+        const rStorage = document.getElementById('radio-import-storage');
+        if (rStorage) rStorage.checked = true;
+        onImportTargetTypeChange();
+        if (targetId) {
+            const plantSelect = document.getElementById('sel-import-plant');
+            if (plantSelect) plantSelect.value = String(targetId);
+        }
+    } else {
+        const rStorage = document.getElementById('radio-import-storage');
+        if (rStorage) rStorage.checked = true;
+        onImportTargetTypeChange();
+    }
+
+    setupDropzone();
+    modal.classList.add('show');
+}
+
+function closeImportModal() {
+    const modal = document.getElementById('import-modal');
+    if (modal) modal.classList.remove('show');
+}
+
+function onImportTargetTypeChange() {
+    const rView = document.getElementById('radio-import-view');
+    const isView = rView ? rView.checked : false;
+    const gStorage = document.getElementById('group-import-storage');
+    const gView = document.getElementById('group-import-view');
+    const gMode = document.getElementById('group-view-mode');
+
+    if (gStorage) gStorage.style.display = isView ? 'none' : 'block';
+    if (gView) gView.style.display = isView ? 'block' : 'none';
+    if (gMode) gMode.style.display = isView ? 'block' : 'none';
+}
+
+function setupDropzone() {
+    const dropzone = document.getElementById('import-dropzone');
+    if (!dropzone || dropzone.dataset.initialized) return;
+    dropzone.dataset.initialized = 'true';
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('drag-over');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropzone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('drag-over');
+        }, false);
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt ? dt.files : null;
+        if (files && files.length > 0) {
+            onFileSelected(files);
+        }
+    }, false);
+}
+
+function onFileSelected(files) {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    const reader = new FileReader();
+
+    const statusBox = document.getElementById('import-status-box');
+    if (statusBox) statusBox.style.display = 'none';
+
+    reader.onload = function(e) {
+        try {
+            let content = e.target.result;
+            // Strip potential UTF-8 BOM
+            if (content.charCodeAt(0) === 0xFEFF) {
+                content = content.substr(1);
+            }
+            const data = JSON.parse(content);
+            currentImportProjectData = data;
+
+            const labelEl = document.getElementById('dropzone-label');
+            if (labelEl) labelEl.textContent = `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            
+            renderInspectBox(data);
+            const submitBtn = document.getElementById('btn-import-submit');
+            if (submitBtn) submitBtn.disabled = false;
+        } catch (err) {
+            if (statusBox) {
+                statusBox.style.display = 'block';
+                statusBox.className = 'port-status-box error';
+                statusBox.textContent = `❌ Failed to parse JSON in '${file.name}': ${err.message}`;
+            }
+            const submitBtn = document.getElementById('btn-import-submit');
+            if (submitBtn) submitBtn.disabled = true;
+        }
+    };
+    reader.readAsText(file);
+}
+
+function renderInspectBox(data) {
+    const box = document.getElementById('import-inspect-box');
+    if (!box) return;
+    box.style.display = 'block';
+
+    const title = data.name || (data.general && data.general.title) || 'FUXA Project';
+    const version = data.version || '1.00';
+
+    // Devices
+    let devs = data.devices || {};
+    let devList = Array.isArray(devs) ? devs : Object.values(devs);
+    let devNames = devList.map(d => d.name || d.id || 'Unnamed Device');
+    let totalTags = 0;
+    devList.forEach(d => {
+        if (d && d.tags) {
+            totalTags += Array.isArray(d.tags) ? d.tags.length : Object.keys(d.tags).length;
+        }
+    });
+
+    // Views
+    let views = (data.hmi && data.hmi.views) ? data.hmi.views : (data.views || []);
+    let viewList = Array.isArray(views) ? views : Object.values(views);
+    let viewNames = viewList.map(v => v.name || v.id || 'Unnamed Screen');
+
+    box.innerHTML = `
+        <div class="inspect-header">
+            <div>
+                <strong style="color: #fff; font-size: 0.95rem;">${title}</strong>
+                <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 6px;">(v${version})</span>
+            </div>
+            <span class="badge badge-online">VALID FUXA PROJECT</span>
+        </div>
+        <div class="inspect-pills">
+            <span class="inspect-pill" style="color: var(--accent-storage);">🔌 <strong>${devNames.length}</strong> Devices</span>
+            <span class="inspect-pill" style="color: var(--accent-cyan);">📊 <strong>${totalTags.toLocaleString()}</strong> Tags</span>
+            <span class="inspect-pill" style="color: #7ee787;">🖥️ <strong>${viewNames.length}</strong> HMI Views</span>
+        </div>
+        ${viewNames.length > 0 ? `
+            <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 4px;">Detected Views:</div>
+            <div class="inspect-chips">
+                ${viewNames.map(name => `<span class="view-chip">${name}</span>`).join('')}
+            </div>
+        ` : ''}
+    `;
+}
+
+async function submitImportProject() {
+    if (!currentImportProjectData) {
+        alert("Please select a project.json file first.");
+        return;
+    }
+
+    const rView = document.getElementById('radio-import-view');
+    const isView = rView ? rView.checked : false;
+    const btn = document.getElementById('btn-import-submit');
+    const statusBox = document.getElementById('import-status-box');
+    const chkReload = document.getElementById('chk-auto-reload');
+    const autoReload = chkReload ? chkReload.checked : true;
+    const chkBridge = document.getElementById('chk-preserve-bridge');
+    const preserveBridge = chkBridge ? chkBridge.checked : true;
+
+    let endpoint = '';
+    let targetDesc = '';
+
+    if (isView) {
+        const viewId = document.getElementById('sel-import-view').value;
+        if (!viewId) {
+            alert("Please select a destination View Server.");
+            return;
+        }
+        endpoint = `/api/instances/${viewId}/import-project`;
+        targetDesc = `View Server (${viewId})`;
+    } else {
+        const plantId = document.getElementById('sel-import-plant').value;
+        endpoint = `/api/storage/${plantId}/import-project`;
+        targetDesc = `Plant ${plantId} Master Storage Server`;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Importing & Backing Up Database...';
+    }
+    if (statusBox) {
+        statusBox.style.display = 'block';
+        statusBox.className = 'port-status-box loading';
+        statusBox.textContent = `⏳ Importing project into ${targetDesc}... Creating pre-import backup...`;
+    }
+
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                project_data: currentImportProjectData,
+                preserve_bridge: preserveBridge,
+                auto_restart: autoReload
+            })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+            if (statusBox) {
+                statusBox.className = 'port-status-box success';
+                const details = data.details || {};
+                statusBox.innerHTML = `
+                    <div style="font-weight: 700; margin-bottom: 4px;">&#10003; Project Successfully Imported!</div>
+                    <div>Target: <strong>${targetDesc}</strong></div>
+                    <div>Screens Imported: <strong>${details.views_count || 0} views</strong> | Devices: <strong>${details.devices_count || 0}</strong></div>
+                    ${details.backup_path ? `<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">🛡️ Pre-backup: <code>${details.backup_path}</code></div>` : ''}
+                    ${data.pm2 && data.pm2.restarted ? `<div style="font-size: 0.78rem; color: #7ee787; margin-top: 4px;">📢 PM2 process reloaded live successfully!</div>` : ''}
+                `;
+            }
+            if (btn) btn.textContent = '✓ Import Complete';
+
+            setTimeout(() => {
+                closeImportModal();
+                showAlert(`<strong>&#10003; Project Imported Successfully!</strong><br/>Loaded into ${targetDesc}.`);
+                loadMatrix();
+            }, 1800);
+        } else {
+            if (statusBox) {
+                statusBox.className = 'port-status-box error';
+                statusBox.textContent = `❌ Import Failed: ${data.detail || data.message || 'Unknown server error'}`;
+            }
+            if (btn) {
+                btn.disabled = false;
+                btn.textContent = '🚀 Import & Apply Now';
+            }
+        }
+    } catch (err) {
+        if (statusBox) {
+            statusBox.className = 'port-status-box error';
+            statusBox.textContent = `❌ Import Request Failed: ${err.message}`;
+        }
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🚀 Import & Apply Now';
+        }
     }
 }

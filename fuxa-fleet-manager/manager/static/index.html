@@ -27,6 +27,7 @@
                 <span>Active Plants: <strong id="stat-plants">5</strong></span>
             </div>
             <button class="btn btn-secondary btn-sm" onclick="syncInstances()" title="Auto-detect any manually created PM2 or directory instances">&#x21bb; Auto-Sync PM2</button>
+            <button class="btn btn-secondary" onclick="openImportModal()">&#128229; Import project.json</button>
             <button class="btn btn-primary" onclick="openCreateModal()">+ Create View Server</button>
         </div>
     </header>
@@ -215,6 +216,103 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeLogModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Project Wizard Modal -->
+    <div id="import-modal" class="modal-backdrop">
+        <div class="modal-box" style="max-width: 640px; width: 95%;">
+            <div class="modal-header">
+                <h3 id="import-modal-title">&#128229; Import FUXA Project</h3>
+                <button class="btn-close" onclick="closeImportModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 20px;">
+                <p class="modal-desc" style="margin-bottom: 16px;">
+                    Import a FUXA <code>project.json</code> or <code>.fuxap</code> export file into any Storage or View Server.
+                    Existing databases are automatically backed up before import.
+                </p>
+
+                <!-- Target Destination Selection -->
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="margin-bottom: 6px; display: block; font-weight: 600;">1. Target Destination Server</label>
+                    <div style="display: flex; gap: 20px; margin-bottom: 10px;">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+                            <input type="radio" name="import-target-type" id="radio-import-storage" value="storage" checked onchange="onImportTargetTypeChange()">
+                            <span>🏭 Master Storage Server</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.9rem;">
+                            <input type="radio" name="import-target-type" id="radio-import-view" value="view" onchange="onImportTargetTypeChange()">
+                            <span>🖥️ HMI View Server</span>
+                        </label>
+                    </div>
+
+                    <!-- Storage Dropdown -->
+                    <div id="group-import-storage">
+                        <select id="sel-import-plant" style="width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid var(--border-color); color: #fff; border-radius: 6px; font-family: var(--font-mono);">
+                            <option value="9">Plant 9 - Paintshop Complex (Master Storage :5801)</option>
+                            <option value="1">Plant 1 - Foundry & Powerhouse (Storage :5101)</option>
+                            <option value="2">Plant 2 - Stamping & Press (Storage :5201)</option>
+                            <option value="3">Plant 3 - Body & Assembly (Storage :5301)</option>
+                            <option value="4">Plant 4 - Powertrain & Engine (Storage :5401)</option>
+                        </select>
+                    </div>
+
+                    <!-- View Dropdown -->
+                    <div id="group-import-view" style="display: none;">
+                        <select id="sel-import-view" style="width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid var(--border-color); color: #fff; border-radius: 6px; font-family: var(--font-mono);">
+                            <!-- Populated dynamically from cached instances -->
+                        </select>
+                    </div>
+                </div>
+
+                <!-- View Specific: Architecture Mode -->
+                <div id="group-view-mode" style="display: none; background: rgba(56, 139, 253, 0.08); border: 1px solid rgba(56, 139, 253, 0.25); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                    <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="chk-preserve-bridge" checked style="margin-top: 3px;">
+                        <div>
+                            <strong style="color: #79c0ff; font-size: 0.85rem;">Storage Bridge Mode (Recommended)</strong>
+                            <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">
+                                Configures View Server to consume tags via the Central Storage Server OPC-UA bridge (<code>opc.tcp://127.0.0.1:4840</code>) with zero direct PLC drivers.
+                            </p>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- File Dropzone -->
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label style="margin-bottom: 6px; display: block; font-weight: 600;">2. Select FUXA Project File</label>
+                    <div id="import-dropzone" class="import-dropzone" onclick="document.getElementById('file-project-input').click()">
+                        <div style="font-size: 2.2rem; margin-bottom: 6px;">&#128193;</div>
+                        <div id="dropzone-label" style="font-weight: 600; font-size: 0.95rem; color: #fff;">Click to Browse or Drag & Drop project.json</div>
+                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">Supports <code>.json</code>, <code>.fuxap</code>, and <code>.fuxa</code> export files</div>
+                        <input type="file" id="file-project-input" accept=".json,.fuxap,.fuxa" style="display: none;" onchange="onFileSelected(this.files)">
+                    </div>
+                </div>
+
+                <!-- Live Project Inspection Summary -->
+                <div id="import-inspect-box" class="inspect-box" style="display: none; margin-bottom: 16px;">
+                    <!-- Populated after file is parsed -->
+                </div>
+
+                <!-- Safety & Reload Options -->
+                <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; font-size: 0.82rem; color: var(--text-muted);">
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="chk-auto-backup" checked disabled>
+                        <span>&#128737;&#65039; Automatic pre-import backup to <code>locations/backups/</code> (Zero Data Loss)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                        <input type="checkbox" id="chk-auto-reload" checked>
+                        <span>&#128227; Instant live reload of PM2 process to apply screens and tags immediately</span>
+                    </label>
+                </div>
+
+                <!-- Status Feedback Banner -->
+                <div id="import-status-box" style="display: none; padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 8px;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+                <button class="btn btn-primary" id="btn-import-submit" onclick="submitImportProject()" disabled>&#128640; Import & Apply Now</button>
             </div>
         </div>
     </div>

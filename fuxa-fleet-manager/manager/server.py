@@ -11,14 +11,14 @@ import json
 import shutil
 import datetime
 import logging
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from pm2_adapter import PM2Adapter
 from port_engine import PortEngine
-from project_builder import generate_fuxa_database
+from project_builder import generate_fuxa_database, import_project_to_database, inspect_project_data
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from nginx.fuxa_route_generator import generate_nginx_conf, reload_nginx
@@ -54,6 +54,12 @@ class ReconfigurePortRequest(BaseModel):
 
 class StorageActionRequest(BaseModel):
     plant_id: int
+
+class ImportProjectRequest(BaseModel):
+    project_data: dict = None
+    preserve_bridge: bool = True
+    auto_restart: bool = True
+    opcua_endpoint: str = "opc.tcp://127.0.0.1:4840"
 
 @app.on_event("startup")
 def on_startup():
@@ -428,6 +434,188 @@ def get_logs(target: str, lines: int = 100):
     Example: /api/logs/5810 or /api/logs/P9_Storage_Server
     """
     return pm2_adapter.get_process_logs(target, lines=lines)
+
+@app.post("/api/project/inspect")
+async def api_inspect_project(request: Request):
+    """Parses and inspects a project.json or .fuxap payload and returns a structural summary."""
+    try:
+        body = await request.json()
+        if isinstance(body, dict) and "project_data" in body and isinstance(body["project_data"], dict):
+            pdata = body["project_data"]
+        else:
+            pdata = body
+        return inspect_project_data(pdata)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse project JSON: {str(e)}")
+
+@app.post("/api/storage/{plant_id}/import-project")
+async def api_import_storage_project(plant_id: int, request: Request):
+    """
+    Imports a full project.json / .fuxap into the specified Plant Storage Server.
+    1. Validates project payload and plant.
+    2. Creates automatic timestamped backup in locations/backups/.
+    3. Replaces tables with imported project (all devices, tags, views, alarms, etc.).
+    4. Automatically reloads PM2 storage server if active.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
+
+    if isinstance(body, dict) and "project_data" in body and isinstance(body["project_data"], dict):
+        pdata = body["project_data"]
+        auto_restart = body.get("auto_restart", True)
+    else:
+        pdata = body
+        auto_restart = True
+
+    storage_work_dir = os.path.join(STORAGE_DIR, f"plant_{plant_id}")
+    os.makedirs(storage_work_dir, exist_ok=True)
+
+    result = import_project_to_database(
+        target_work_dir=storage_work_dir,
+        project_data=pdata,
+        role="storage",
+        plant_id=plant_id
+    )
+
+    pm2_res = {"restarted": False, "status": "unchanged"}
+    plants = port_engine.registry.get("plants", {})
+    p_info = plants.get(str(plant_id), {})
+    pm2_name = p_info.get("storage_pm2_name", f"P{plant_id}_Storage_Server")
+
+    if auto_restart:
+        pm2_status = pm2_adapter.get_process_status(pm2_name)
+        if pm2_status.get("exists") and pm2_status.get("status") == "online":
+            res = pm2_adapter.restart_instance(pm2_name)
+            pm2_res = {"restarted": res.get("success", False), "status": "online"}
+        elif not pm2_status.get("exists") and p_info.get("storage_port"):
+            res = pm2_adapter.start_instance(
+                name=pm2_name,
+                script_path=FUXA_SERVER_PATH,
+                port=p_info["storage_port"],
+                user_dir=storage_work_dir,
+                role="storage"
+            )
+            pm2_res = {"restarted": res.get("success", False), "status": "started"}
+
+    return {
+        "success": True,
+        "plant_id": plant_id,
+        "details": result,
+        "pm2": pm2_res,
+        "message": f"Successfully imported project into Plant {plant_id} Storage Server ({result.get('devices_count', 0)} devices, {result.get('views_count', 0)} views)."
+    }
+
+@app.post("/api/instances/{instance_id}/import-project")
+async def api_import_view_project(instance_id: str, request: Request):
+    """
+    Imports HMI views and screens from project.json / .fuxap into the specified View Server.
+    1. Validates project payload and target view server.
+    2. Creates automatic timestamped backup in locations/backups/.
+    3. Imports views, layouts, and general settings.
+    4. Preserves OPC-UA Bridge to Central Storage Server by default (zero direct PLC drivers).
+    5. Automatically reloads PM2 view server if active.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON payload: {str(e)}")
+
+    if isinstance(body, dict) and "project_data" in body and isinstance(body["project_data"], dict):
+        pdata = body["project_data"]
+        preserve_bridge = body.get("preserve_bridge", True)
+        auto_restart = body.get("auto_restart", True)
+        opcua_endpoint = body.get("opcua_endpoint", "opc.tcp://127.0.0.1:4840")
+    else:
+        pdata = body
+        preserve_bridge = True
+        auto_restart = True
+        opcua_endpoint = "opc.tcp://127.0.0.1:4840"
+
+    instances = port_engine.get_all_instances()
+    inst = instances.get(instance_id)
+
+    # Allow lookup by port (e.g. 9610 or "9610")
+    if not inst:
+        for i_id, i_data in instances.items():
+            if str(i_data.get("port")) == str(instance_id):
+                instance_id = i_id
+                inst = i_data
+                break
+
+    if not inst:
+        # Resolve port and instance directory
+        port = None
+        if instance_id.isdigit():
+            port = int(instance_id)
+            instance_id = f"fuxa_port_{port}"
+        elif "port_" in instance_id:
+            try:
+                port = int(instance_id.split("port_")[1])
+            except Exception:
+                port = None
+
+        work_dir = os.path.join(VIEWS_DIR, instance_id)
+        p_str = str(port) if port else ""
+        plant_id = int(p_str[0]) if len(p_str) >= 4 else 9
+        pm2_name = instance_id
+
+        if port:
+            div = int(p_str[1]) if len(p_str) >= 4 else 6
+            line = int(p_str[2]) if len(p_str) >= 4 else 1
+            port_engine.register_instance(instance_id, {
+                "id": instance_id,
+                "name": f"Imported View Server (Port {port})",
+                "plant": plant_id,
+                "division": div,
+                "line": line,
+                "port": port,
+                "subpath": f"/p{plant_id}/div{div}/l{line}",
+                "work_dir": work_dir,
+                "status": "STOPPED",
+                "pm2_managed": True
+            })
+    else:
+        work_dir = inst.get("work_dir") or os.path.join(VIEWS_DIR, instance_id)
+        plant_id = inst.get("plant", 9)
+        pm2_name = inst.get("pm2_name", instance_id)
+
+    os.makedirs(work_dir, exist_ok=True)
+
+    result = import_project_to_database(
+        target_work_dir=work_dir,
+        project_data=pdata,
+        role="view",
+        plant_id=plant_id,
+        preserve_bridge=preserve_bridge,
+        opcua_endpoint=opcua_endpoint
+    )
+
+    pm2_res = {"restarted": False, "status": "unchanged"}
+    if auto_restart:
+        pm2_status = pm2_adapter.get_process_status(pm2_name)
+        if pm2_status.get("exists") and pm2_status.get("status") == "online":
+            res = pm2_adapter.restart_instance(pm2_name)
+            pm2_res = {"restarted": res.get("success", False), "status": "online"}
+        elif inst and inst.get("port"):
+            res = pm2_adapter.start_instance(
+                name=pm2_name,
+                script_path=FUXA_SERVER_PATH,
+                port=inst["port"],
+                user_dir=work_dir,
+                subpath=inst.get("subpath", ""),
+                role="view"
+            )
+            pm2_res = {"restarted": res.get("success", False), "status": "started"}
+
+    return {
+        "success": True,
+        "instance_id": instance_id,
+        "details": result,
+        "pm2": pm2_res,
+        "message": f"Successfully imported project into View Server {instance_id} ({result.get('views_count', 0)} views)."
+    }
 
 # Static files for the Manager UI
 static_dir = os.path.join(os.path.dirname(__file__), "static")

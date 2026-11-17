@@ -79,6 +79,12 @@ _logs/
 
 # database
 _db/
+*.db
+*.fuxap.db
+locations/backups/*.db
+locations/backups/*.fuxap.db
+locations/views/*/_appdata
+locations/storage/*/_appdata
 
 # ex.packages
 _pkg/
