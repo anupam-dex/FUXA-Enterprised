@@ -45,20 +45,67 @@ def generate_fuxa_database(target_dir: str, plant_id: int, division_name: str, l
     cur.execute("CREATE TABLE IF NOT EXISTS locations (name TEXT PRIMARY KEY, value TEXT);")
     cur.execute("CREATE TABLE IF NOT EXISTS arMarkers (name TEXT PRIMARY KEY, value TEXT);")
 
-    # 1. General settings
-    general_data = {
-        "version": "1.02",
-        "title": f"Plant {plant_id} - {division_name} ({line_name})",
+    # 1. Create Default HMI View
+    view_id = "view_overview"
+    view_obj = {
+        "id": view_id,
+        "name": f"{line_name.replace(' ', '_')}_Overview",
+        "profile": {
+            "width": 1920,
+            "height": 1080,
+            "bkcolor": "#12171f",
+            "margin": 10
+        },
+        "items": {},
+        "variables": [],
+        "svgcontent": (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">'
+            '<rect width="1920" height="1080" fill="#12171f"/>'
+            '<rect x="260" y="240" width="1400" height="600" rx="16" fill="#1e222d" stroke="#30363d" stroke-width="2"/>'
+            f'<text x="960" y="380" fill="#58a6ff" font-size="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="bold">Plant {plant_id} - {division_name}</text>'
+            f'<text x="960" y="440" fill="#7ee787" font-size="24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">Line: {line_name}</text>'
+            '<text x="960" y="520" fill="#c9d1d9" font-size="20" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">Central OPC-UA Bridge Connected (opc.tcp://127.0.0.1:4840)</text>'
+            '<text x="960" y="580" fill="#8b949e" font-size="16" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">Ready for HMI screen design and tag binding in the Editor</text>'
+            '</svg>'
+        )
+    }
+    cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(view_obj)))
+
+    # 2. General settings and complete HMI Layout
+    layout_data = {
+        "start": view_id,
+        "navigation": {
+            "mode": "fix",
+            "type": "inline",
+            "bkcolor": "#161b22",
+            "fgcolor": "#c9d1d9",
+            "items": [
+                {
+                    "icon": "home",
+                    "view": view_id,
+                    "link": "",
+                    "text": f"{division_name} Overview"
+                }
+            ]
+        },
         "header": {
             "title": f"Plant {plant_id} | {division_name}",
             "alarms": True,
-            "login": True
-        }
+            "login": True,
+            "items": []
+        },
+        "showdev": True,
+        "zoom": "autoresize",
+        "inputdialog": "false",
+        "hidenavigation": False,
+        "theme": "",
+        "loginonstart": False
     }
-    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("version", "1.02"))
-    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("general", json.dumps(general_data)))
+    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('layout', ?);", (json.dumps(layout_data),))
+    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
+    cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('name', ?);", (json.dumps(f"Plant {plant_id} - {division_name}"),))
 
-    # 2. Pre-configure OPC-UA Storage Device
+    # 3. Pre-configure OPC-UA Storage Device
     device_id = f"dev_opcua_plant_{plant_id}"
     device_obj = {
         "id": device_id,
@@ -78,21 +125,6 @@ def generate_fuxa_database(target_dir: str, plant_id: int, division_name: str, l
         "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
         (device_id, json.dumps(device_obj), "opc-ua", "", "")
     )
-
-    # 3. Create Default HMI View
-    view_id = "view_overview"
-    view_obj = {
-        "id": view_id,
-        "name": f"{line_name.replace(' ', '_')}_Overview",
-        "profile": {
-            "width": 1920,
-            "height": 1080,
-            "bkcolor": "#1e222d",
-            "margin": 10
-        },
-        "items": {}
-    }
-    cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(view_obj)))
 
     conn.commit()
     conn.close()
@@ -352,14 +384,59 @@ def import_project_to_database(
             "profile": {
                 "width": 1920,
                 "height": 1080,
-                "bkcolor": "#1e222d",
+                "bkcolor": "#12171f",
                 "margin": 10
             },
-            "items": {}
+            "items": {},
+            "variables": [],
+            "svgcontent": (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">'
+                '<rect width="1920" height="1080" fill="#12171f"/>'
+                '<rect x="260" y="240" width="1400" height="600" rx="16" fill="#1e222d" stroke="#30363d" stroke-width="2"/>'
+                f'<text x="960" y="380" fill="#58a6ff" font-size="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="bold">Plant {plant_id} Master Storage Server</text>'
+                '<text x="960" y="440" fill="#7ee787" font-size="24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">&#9679; Central PLC Driver Gateway &amp; Tag Cache Active</text>'
+                f'<text x="960" y="520" fill="#c9d1d9" font-size="20" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">Total Connected Devices: {len(imported_devices)} | Monitored Tags: {total_tags:,}</text>'
+                '<text x="960" y="580" fill="#8b949e" font-size="16" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">HMI Screens are hosted on dedicated View Servers via OPC-UA Bridge (Port 4840)</text>'
+                '<text x="960" y="660" fill="#8b949e" font-size="14" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">Managed by FUXA Enterprise Fleet Manager</text>'
+                '</svg>'
+            )
         }
         cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(view_obj)))
 
-        # Clean minimal general settings for storage
+        # Complete HMI layout settings for storage server
+        layout_data = {
+            "start": view_id,
+            "navigation": {
+                "mode": "fix",
+                "type": "inline",
+                "bkcolor": "#161b22",
+                "fgcolor": "#c9d1d9",
+                "items": [
+                    {
+                        "icon": "home",
+                        "view": view_id,
+                        "link": "",
+                        "text": f"Plant {plant_id} Storage"
+                    }
+                ]
+            },
+            "header": {
+                "title": f"Plant {plant_id} Master Storage (PLC Gateway)",
+                "alarms": False,
+                "login": True,
+                "items": []
+            },
+            "showdev": True,
+            "zoom": "autoresize",
+            "inputdialog": "false",
+            "hidenavigation": False,
+            "theme": "",
+            "loginonstart": False
+        }
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('layout', ?);", (json.dumps(layout_data),))
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('name', ?);", (json.dumps(f"Plant {plant_id} Master Storage Server"),))
+
         general_data = {
             "version": "1.02",
             "title": f"Plant {plant_id} Master Storage Server",
@@ -369,7 +446,6 @@ def import_project_to_database(
                 "login": True
             }
         }
-        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
         cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('general', ?);", (json.dumps(general_data),))
 
         conn.commit()
@@ -439,6 +515,42 @@ def import_project_to_database(
         for k, v in project_data.items():
             if k not in reserved_top_keys:
                 cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", (k, json.dumps(v)))
+
+        # Ensure layout in View server has required fields and valid navigation
+        cur.execute("SELECT value FROM general WHERE name = 'layout';")
+        layout_row = cur.fetchone()
+        existing_layout = json.loads(layout_row[0]) if (layout_row and layout_row[0]) else {}
+
+        if not existing_layout.get("start"):
+            cur.execute("SELECT name FROM views LIMIT 1;")
+            fv = cur.fetchone()
+            if fv:
+                existing_layout["start"] = fv[0]
+
+        if not isinstance(existing_layout.get("navigation"), dict) or not existing_layout["navigation"].get("mode"):
+            start_v = existing_layout.get("start", "")
+            existing_layout["navigation"] = {
+                "mode": "fix",
+                "type": "inline",
+                "bkcolor": "#161b22",
+                "fgcolor": "#c9d1d9",
+                "items": [{"icon": "home", "view": start_v, "link": "", "text": "Home"}]
+            }
+
+        if not isinstance(existing_layout.get("header"), dict):
+            existing_layout["header"] = {"title": "FUXA HMI", "alarms": True, "login": True, "items": []}
+
+        if "loginonstart" not in existing_layout:
+            existing_layout["loginonstart"] = False
+
+        if "showdev" not in existing_layout:
+            existing_layout["showdev"] = True
+
+        if "zoom" not in existing_layout:
+            existing_layout["zoom"] = "autoresize"
+
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('layout', ?);", (json.dumps(existing_layout),))
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
 
         # 3. Import Texts
         texts = project_data.get("texts", [])

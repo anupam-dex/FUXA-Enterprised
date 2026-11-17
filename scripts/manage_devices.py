@@ -141,6 +141,14 @@ def backup_database(db_path):
     shutil.copy2(db_path, dest)
     print(f"[🛡️] Created pre-modification backup: {dest}")
 
+def safe_delete_device(cur, did):
+    """Safely deletes device from devices and optional devicesSecurity tables."""
+    cur.execute("DELETE FROM devices WHERE name = ?;", (did,))
+    try:
+        cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (did,))
+    except Exception:
+        pass
+
 def disable_device(conn, name_or_id, enable=False):
     cur = conn.cursor()
     cur.execute("SELECT name, value FROM devices;")
@@ -198,15 +206,13 @@ def remove_device_by_name(conn, device_name):
         matching.sort(key=lambda d: d["tags_count"], reverse=True)
         to_delete = matching[1:] # delete duplicates
         for d in to_delete:
-            cur.execute("DELETE FROM devices WHERE name = ?;", (d["id"],))
-            cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (d["id"],))
+            safe_delete_device(cur, d["id"])
         conn.commit()
         print(f"[✓] Deleted {len(to_delete)} duplicate copy(ies). Kept primary ID: {matching[0]['id']} with {matching[0]['tags_count']} tags.")
         return True
     else:
         did = matching[0]["id"]
-        cur.execute("DELETE FROM devices WHERE name = ?;", (did,))
-        cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (did,))
+        safe_delete_device(cur, did)
         conn.commit()
         print(f"[✓] Successfully removed device '{matching[0]['name']}' (ID: {did}).")
         return True
@@ -242,23 +248,143 @@ def list_devices(conn):
     print(f"Total Devices: {len(devices)}\n")
     return devices
 
+def repair_hmi_layout(conn, plant_id=None):
+    """
+    Ensures table 'general' contains a complete, valid 'layout' object
+    and table 'views' contains at least 1 valid view with SVG content.
+    This prevents the FUXA Angular web UI from crashing on:
+    - this.hmi.layout.navigation.mode (undefined navigation)
+    - this.hmi.layout.loginonstart (undefined layout)
+    which causes the page to keep loading forever.
+    """
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
+    cur.execute("CREATE TABLE IF NOT EXISTS views (name TEXT PRIMARY KEY, value TEXT);")
+
+    # 1. Check existing views
+    cur.execute("SELECT name, value FROM views;")
+    views_rows = cur.fetchall()
+
+    pid_str = str(plant_id) if plant_id else "9"
+    if views_rows:
+        view_id = views_rows[0][0]
+    else:
+        view_id = f"view_storage_plant_{pid_str}"
+        default_view = {
+            "id": view_id,
+            "name": f"Plant_{pid_str}_Storage_Overview",
+            "profile": {
+                "width": 1920,
+                "height": 1080,
+                "bkcolor": "#12171f",
+                "margin": 10
+            },
+            "items": {},
+            "variables": [],
+            "svgcontent": (
+                '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">'
+                '<rect width="1920" height="1080" fill="#12171f"/>'
+                '<rect x="260" y="240" width="1400" height="600" rx="16" fill="#1e222d" stroke="#30363d" stroke-width="2"/>'
+                f'<text x="960" y="380" fill="#58a6ff" font-size="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="bold">Plant {pid_str} Master Storage Server</text>'
+                '<text x="960" y="440" fill="#7ee787" font-size="24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">&#9679; Central PLC Driver Gateway &amp; Tag Cache Active</text>'
+                '<text x="960" y="540" fill="#8b949e" font-size="18" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">HMI Screens are hosted on dedicated View Servers via OPC-UA Bridge (Port 4840)</text>'
+                '</svg>'
+            )
+        }
+        cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(default_view)))
+
+    # 2. Check layout in general table
+    cur.execute("SELECT value FROM general WHERE name = 'layout';")
+    row = cur.fetchone()
+    layout = {}
+    needs_update = False
+
+    if row and row[0]:
+        try:
+            layout = json.loads(row[0])
+        except Exception:
+            layout = {}
+            needs_update = True
+    else:
+        needs_update = True
+
+    if not isinstance(layout, dict):
+        layout = {}
+        needs_update = True
+
+    if not layout.get("start"):
+        layout["start"] = view_id
+        needs_update = True
+
+    if not isinstance(layout.get("navigation"), dict) or not layout["navigation"].get("mode"):
+        layout["navigation"] = {
+            "mode": "fix",
+            "type": "inline",
+            "bkcolor": "#161b22",
+            "fgcolor": "#c9d1d9",
+            "items": [
+                {
+                    "icon": "home",
+                    "view": view_id,
+                    "link": "",
+                    "text": f"Plant {pid_str} Storage"
+                }
+            ]
+        }
+        needs_update = True
+
+    if not isinstance(layout.get("header"), dict):
+        layout["header"] = {
+            "title": f"Plant {pid_str} Master Storage (PLC Gateway)",
+            "alarms": False,
+            "login": True,
+            "items": []
+        }
+        needs_update = True
+
+    if "loginonstart" not in layout:
+        layout["loginonstart"] = False
+        needs_update = True
+
+    if "showdev" not in layout:
+        layout["showdev"] = True
+        needs_update = True
+
+    if "zoom" not in layout:
+        layout["zoom"] = "autoresize"
+        needs_update = True
+
+    if "hidenavigation" not in layout:
+        layout["hidenavigation"] = False
+        needs_update = True
+
+    if needs_update:
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('layout', ?);", (json.dumps(layout),))
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('version', '1.02');")
+        cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES ('name', ?);", (json.dumps(f"Plant {pid_str} Master Storage Server"),))
+        conn.commit()
+        print(f"[✓] Repaired HMI Layout & View settings (fixed web loading spinner freeze).")
+
+
 def dedup_devices(conn):
     cur = conn.cursor()
     cur.execute("SELECT name, value FROM devices;")
     rows = cur.fetchall()
 
-    devices_by_name = {}
+    devices_by_norm_name = {}
     for r in rows:
         did = r[0]
         try:
             val = json.loads(r[1])
-            dname = val.get("name", did)
-            tags_count = len(val.get("tags", {}))
+            dname = val.get("name", did).strip()
+            tags = val.get("tags", {})
+            tags_count = len(tags) if isinstance(tags, (dict, list)) else 0
         except Exception:
             dname = did
             tags_count = 0
-        
-        devices_by_name.setdefault(dname, []).append({
+
+        norm = dname.lower()
+        devices_by_norm_name.setdefault(norm, []).append({
             "id": did,
             "name": dname,
             "tags_count": tags_count,
@@ -266,13 +392,13 @@ def dedup_devices(conn):
         })
 
     to_delete = []
-    for dname, dev_list in devices_by_name.items():
+    for norm, dev_list in devices_by_norm_name.items():
         if len(dev_list) > 1:
             # Sort by tags count descending so we keep the device with the most tags configured
             dev_list.sort(key=lambda d: d["tags_count"], reverse=True)
             keeper = dev_list[0]
             duplicates = dev_list[1:]
-            print(f"[!] Duplicate device name found: '{dname}' ({len(dev_list)} copies)")
+            print(f"[!] Duplicate device name found: '{keeper['name']}' ({len(dev_list)} copies)")
             print(f"    - Keeping ID: '{keeper['id']}' ({keeper['tags_count']} tags)")
             for dup in duplicates:
                 print(f"    - Marking for deletion: ID: '{dup['id']}' ({dup['tags_count']} tags)")
@@ -280,14 +406,11 @@ def dedup_devices(conn):
 
     if not to_delete:
         print("[✓] No duplicate devices found.")
-        return
-
-    for did in to_delete:
-        cur.execute("DELETE FROM devices WHERE name = ?;", (did,))
-        cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (did,))
-
-    conn.commit()
-    print(f"[✓] Successfully deleted {len(to_delete)} duplicate device(s).")
+    else:
+        for did in to_delete:
+            safe_delete_device(cur, did)
+        conn.commit()
+        print(f"[✓] Successfully deleted {len(to_delete)} duplicate device(s).")
 
 def remove_device(conn, device_id):
     cur = conn.cursor()
@@ -299,8 +422,7 @@ def remove_device(conn, device_id):
 
     val = json.loads(row[1]) if row[1] else {}
     dname = val.get("name", device_id)
-    cur.execute("DELETE FROM devices WHERE name = ?;", (device_id,))
-    cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (device_id,))
+    safe_delete_device(cur, device_id)
     conn.commit()
     print(f"[✓] Successfully removed device '{dname}' (ID: {device_id}).")
     return True
@@ -329,6 +451,7 @@ def main():
     parser.add_argument("--scan", action="store_true", help="Scan and list all FUXA project databases and device counts")
     parser.add_argument("--list", action="store_true", help="List all devices in the database")
     parser.add_argument("--dedup", action="store_true", help="Automatically remove duplicate devices (keeps device with tags)")
+    parser.add_argument("--repair", action="store_true", help="Repair HMI layout and views to fix web loading spinner freeze")
     parser.add_argument("--remove", type=str, help="Remove device by ID")
     parser.add_argument("--remove-name", type=str, help="Remove or dedup device by its displayed Name (e.g. 'Gas_Flow_Modbus')")
     parser.add_argument("--disable", type=str, help="Disable a device by Name or ID so FUXA does not poll it")
@@ -356,14 +479,18 @@ def main():
     print(f"[i] Using database: {db_path}")
 
     # Create backup before any destructive operation
-    if args.dedup or args.remove or args.remove_name or args.rename:
+    if args.dedup or args.remove or args.remove_name or args.rename or args.repair:
         backup_database(db_path)
 
     conn = sqlite3.connect(db_path)
 
     try:
-        if args.dedup:
+        if args.repair:
+            repair_hmi_layout(conn, plant_id=args.plant)
+            list_devices(conn)
+        elif args.dedup:
             dedup_devices(conn)
+            repair_hmi_layout(conn, plant_id=args.plant)
             list_devices(conn)
         elif args.remove:
             remove_device(conn, args.remove)
@@ -385,7 +512,7 @@ def main():
     finally:
         conn.close()
 
-    if args.dedup or args.remove or args.remove_name or args.rename:
+    if args.dedup or args.remove or args.remove_name or args.rename or args.repair:
         print("\n[📢] Database updated. If FUXA is running, reload or restart PM2 to apply changes:")
         if args.plant:
             print(f"     pm2 restart P{args.plant}_Storage_Server")
