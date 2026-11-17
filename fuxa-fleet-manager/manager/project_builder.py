@@ -381,6 +381,7 @@ def import_project_to_database(
         view_obj = {
             "id": view_id,
             "name": f"Plant_{plant_id}_Storage_Overview",
+            "type": "svg",
             "profile": {
                 "width": 1920,
                 "height": 1080,
@@ -499,6 +500,22 @@ def import_project_to_database(
                 continue
             v_id = v.get("id") or f"view_{len(imported_views)}"
             v_name = v.get("name", v_id)
+            if not v.get("type"):
+                v["type"] = "svg"
+            if not v.get("profile") or not isinstance(v.get("profile"), dict):
+                v["profile"] = {"width": 1920, "height": 1080, "bkcolor": "#1e222d", "margin": 10}
+            if "width" not in v["profile"]:
+                v["profile"]["width"] = 1920
+            if "height" not in v["profile"]:
+                v["profile"]["height"] = 1080
+            if "bkcolor" not in v["profile"]:
+                v["profile"]["bkcolor"] = "#1e222d"
+            if not isinstance(v.get("items"), dict):
+                v["items"] = {}
+            if not isinstance(v.get("variables"), list):
+                v["variables"] = []
+            if not v.get("svgcontent") or not isinstance(v.get("svgcontent"), str) or len(v.get("svgcontent", "").strip()) == 0:
+                v["svgcontent"] = f'<svg id="{v_name}" width="1920" height="1080" xmlns="http://www.w3.org/2000/svg"><rect width="1920" height="1080" fill="#1e222d"/><text x="960" y="540" fill="#8b949e" font-size="28" font-family="sans-serif" text-anchor="middle">{v_name}</text></svg>'
             cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (v_id, json.dumps(v)))
             imported_views.append(v_name)
 

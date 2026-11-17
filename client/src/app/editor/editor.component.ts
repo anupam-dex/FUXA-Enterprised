@@ -552,17 +552,21 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
             if (this.isSvgEditMode(this.editorMode)) {
                 let svgcontent = '';
                 let v = this.getView(view.name);
-                if (v) {
+                if (v && typeof v.svgcontent === 'string') {
                     svgcontent = v.svgcontent;
                 }
-                if (svgcontent.length <= 0) {
-                    svgcontent = '<svg id="' + view.name + '" width="' + view.profile.width + '" height="' + view.profile.height +
+                const vWidth = view.profile?.width || 1920;
+                const vHeight = view.profile?.height || 1080;
+                const vBkcolor = view.profile?.bkcolor || '#1e222d';
+
+                if (!svgcontent || svgcontent.length <= 0) {
+                    svgcontent = '<svg id="' + view.name + '" width="' + vWidth + '" height="' + vHeight +
                         '" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg">' +
                         '<filter id="blur-filter" x="-3" y="-3" width="200" height="200"><feGaussianBlur in="SourceGraphic" stdDeviation="3" /></filter>' +
                         '<g><title>Layer 1</title></g></svg>';
                 }
                 if (this.winRef.nativeWindow.svgEditor) {
-                    this.winRef.nativeWindow.svgEditor.setDocProperty(view.name, view.profile.width, view.profile.height, view.profile.bkcolor);
+                    this.winRef.nativeWindow.svgEditor.setDocProperty(view.name, vWidth, vHeight, vBkcolor);
                     this.winRef.nativeWindow.svgEditor.setSvgString(svgcontent);
                 }
 
@@ -573,13 +577,15 @@ export class EditorComponent implements OnInit, AfterViewInit, OnDestroy {
 
                 if (v) { this.projectService.cleanView(v); }
                 setTimeout(() => {
-                    for (let key in v.items) {
-                        let ga: GaugeSettings = this.getGaugeSettings(v.items[key]);
-                        this.checkGaugeAdded(ga);
+                    if (v?.items) {
+                        for (let key in v.items) {
+                            let ga: GaugeSettings = this.getGaugeSettings(v.items[key]);
+                            this.checkGaugeAdded(ga);
+                        }
                     }
-                    this.winRef.nativeWindow.svgEditor.refreshCanvas();
+                    this.winRef.nativeWindow.svgEditor?.refreshCanvas?.();
                     this.checkSvgElementsMap(true);
-                    this.winRef.nativeWindow.svgEditor.resetUndoStack();
+                    this.winRef.nativeWindow.svgEditor?.resetUndoStack?.();
                 }, 500);
             } else if (this.isCardsEditMode(this.editorMode) && this.cardsview) {
                 this.cardsview.view = view;

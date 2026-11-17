@@ -288,7 +288,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     checkToCloseSideNav() {
-        if (this.hmi.layout) {
+        if (this.hmi.layout?.navigation) {
             let nvoid = NaviModeType[this.hmi.layout.navigation.mode];
             if (nvoid !== NaviModeType.fix && this.matsidenav) {
                 this.matsidenav.close();
@@ -361,7 +361,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
     }
 
     onAlarmsShowMode(mode: string) {
-        if (Utils.getEnumKey(NaviModeType, NaviModeType.fix) === this.hmi.layout.navigation.mode && this.matsidenav) {
+        if (this.hmi.layout?.navigation && Utils.getEnumKey(NaviModeType, NaviModeType.fix) === this.hmi.layout.navigation.mode && this.matsidenav) {
             this.alarmPanelWidth = `calc(100% - ${this.matsidenav._getWidth()}px)`;
         }
         let ele = document.getElementById('alarms-panel');
@@ -437,7 +437,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
                 if (Utils.Boolify(this.hmi.layout.hidenavigation)) {
                     this.showNavigation = false;
                 }
-                let nvoid = NaviModeType[this.hmi.layout.navigation.mode];
+                let nvoid = this.hmi.layout.navigation ? NaviModeType[this.hmi.layout.navigation.mode] : NaviModeType.void;
                 if (this.hmi.layout && nvoid !== NaviModeType.void) {
                     if (nvoid === NaviModeType.over) {
                         this.showSidenav = 'over';
@@ -471,7 +471,7 @@ export class HomeComponent implements OnInit, AfterViewInit, OnDestroy {
         }
         this.isLoading = false;
         this.securityEnabled = this.projectService.isSecurityEnabled();
-        if (this.securityEnabled && !this.isLoggedIn() && this.hmi.layout.loginonstart) {
+        if (this.securityEnabled && !this.isLoggedIn() && this.hmi.layout?.loginonstart) {
             this.onLogin();
         }
     }

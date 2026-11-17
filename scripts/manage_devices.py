@@ -261,18 +261,66 @@ def repair_hmi_layout(conn, plant_id=None):
     cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
     cur.execute("CREATE TABLE IF NOT EXISTS views (name TEXT PRIMARY KEY, value TEXT);")
 
-    # 1. Check existing views
+    # 1. Check existing views & ensure valid SVG content and profile
     cur.execute("SELECT name, value FROM views;")
     views_rows = cur.fetchall()
 
     pid_str = str(plant_id) if plant_id else "9"
+    default_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">'
+        '<rect width="1920" height="1080" fill="#12171f"/>'
+        '<rect x="260" y="240" width="1400" height="600" rx="16" fill="#1e222d" stroke="#30363d" stroke-width="2"/>'
+        f'<text x="960" y="380" fill="#58a6ff" font-size="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="bold">Plant {pid_str} Master Storage Server</text>'
+        '<text x="960" y="440" fill="#7ee787" font-size="24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">&#9679; Central PLC Driver Gateway &amp; Tag Cache Active</text>'
+        '<text x="960" y="540" fill="#8b949e" font-size="18" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">HMI Screens are hosted on dedicated View Servers via OPC-UA Bridge (Port 4840)</text>'
+        '</svg>'
+    )
+
     if views_rows:
         view_id = views_rows[0][0]
+        # Inspect and repair any view missing svgcontent or profile (fixes editor infinite loading freeze)
+        for vname, vval in views_rows:
+            try:
+                vobj = json.loads(vval)
+                v_modified = False
+                if not isinstance(vobj, dict):
+                    vobj = {}
+                    v_modified = True
+                if not vobj.get("profile") or not isinstance(vobj.get("profile"), dict):
+                    vobj["profile"] = {"width": 1920, "height": 1080, "bkcolor": "#12171f", "margin": 10}
+                    v_modified = True
+                if "width" not in vobj["profile"]:
+                    vobj["profile"]["width"] = 1920
+                    v_modified = True
+                if "height" not in vobj["profile"]:
+                    vobj["profile"]["height"] = 1080
+                    v_modified = True
+                if "bkcolor" not in vobj["profile"]:
+                    vobj["profile"]["bkcolor"] = "#12171f"
+                    v_modified = True
+                if not vobj.get("type"):
+                    vobj["type"] = "svg"
+                    v_modified = True
+                if not isinstance(vobj.get("items"), dict):
+                    vobj["items"] = {}
+                    v_modified = True
+                if not isinstance(vobj.get("variables"), list):
+                    vobj["variables"] = []
+                    v_modified = True
+                if not vobj.get("svgcontent") or not isinstance(vobj.get("svgcontent"), str) or len(vobj.get("svgcontent", "").strip()) == 0:
+                    vobj["svgcontent"] = default_svg
+                    v_modified = True
+                if v_modified:
+                    cur.execute("UPDATE views SET value = ? WHERE name = ?;", (json.dumps(vobj), vname))
+                    print(f"[✓] Repaired missing SVG canvas content for view '{vname}' (fixed editor loading freeze).")
+            except Exception:
+                pass
     else:
         view_id = f"view_storage_plant_{pid_str}"
         default_view = {
             "id": view_id,
             "name": f"Plant_{pid_str}_Storage_Overview",
+            "type": "svg",
             "profile": {
                 "width": 1920,
                 "height": 1080,
@@ -281,15 +329,7 @@ def repair_hmi_layout(conn, plant_id=None):
             },
             "items": {},
             "variables": [],
-            "svgcontent": (
-                '<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">'
-                '<rect width="1920" height="1080" fill="#12171f"/>'
-                '<rect x="260" y="240" width="1400" height="600" rx="16" fill="#1e222d" stroke="#30363d" stroke-width="2"/>'
-                f'<text x="960" y="380" fill="#58a6ff" font-size="40" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="bold">Plant {pid_str} Master Storage Server</text>'
-                '<text x="960" y="440" fill="#7ee787" font-size="24" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle" font-weight="600">&#9679; Central PLC Driver Gateway &amp; Tag Cache Active</text>'
-                '<text x="960" y="540" fill="#8b949e" font-size="18" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif" text-anchor="middle">HMI Screens are hosted on dedicated View Servers via OPC-UA Bridge (Port 4840)</text>'
-                '</svg>'
-            )
+            "svgcontent": default_svg
         }
         cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (view_id, json.dumps(default_view)))
 
