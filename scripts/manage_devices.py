@@ -234,15 +234,19 @@ def list_devices(conn):
             val = json.loads(r[1])
             dname = val.get("name", "<unnamed>")
             dtype = val.get("type", "Unknown")
-            tags_count = len(val.get("tags", {}))
+            tags = val.get("tags", {})
+            tags_count = len(tags)
+            daq_count = sum(1 for t in tags.values() if isinstance(t, dict) and t.get("daq", {}).get("enabled"))
+            daq_str = f" ({daq_count} DAQ active)" if daq_count > 0 else ""
             endpoint = val.get("property", {}).get("address", "-")
         except Exception:
             dname = "<corrupt>"
             dtype = "unknown"
             tags_count = 0
+            daq_str = ""
             endpoint = "-"
 
-        print(f"  • ID: {did} | Name: '{dname}' | Type: {dtype} | Tags: {tags_count} | Endpoint: {endpoint}")
+        print(f"  • ID: {did} | Name: '{dname}' | Type: {dtype} | Tags: {tags_count}{daq_str} | Endpoint: {endpoint}")
         devices.append({"id": did, "name": dname, "tags_count": tags_count, "value": r[1]})
 
     print(f"Total Devices: {len(devices)}\n")
@@ -483,6 +487,75 @@ def rename_device(conn, device_id, new_name):
     print(f"[✓] Successfully renamed device from '{old_name}' to '{new_name}' (ID: {device_id}).")
     return True
 
+def bulk_set_daq(conn, plant_id=None, device_name_or_id=None, enable=True, interval=60, changed=True, restored=False):
+    """
+    Bulk enables or disables DAQ (Historical Logging) for tags in SQLite devices table.
+    Can target all devices in the plant, or a specific device by Name or ID.
+    """
+    cur = conn.cursor()
+    cur.execute("SELECT name, value FROM devices;")
+    rows = cur.fetchall()
+
+    if not rows:
+        print("[!] No devices found in database.")
+        return 0, 0
+
+    total_tags_updated = 0
+    devices_updated = 0
+
+    for d_key, d_val in rows:
+        if d_key == 'server':
+            continue
+        try:
+            d_obj = json.loads(d_val)
+            d_id = d_obj.get("id", d_key)
+            d_name = d_obj.get("name", d_key)
+
+            if device_name_or_id:
+                target = device_name_or_id.strip().lower()
+                if target != d_id.lower() and target != d_name.lower() and target not in d_name.lower():
+                    continue
+
+            tags = d_obj.get("tags", {})
+            if not tags:
+                continue
+
+            dev_tags_updated = 0
+            for tid, tag in tags.items():
+                if not isinstance(tag, dict):
+                    continue
+                if enable:
+                    tag["daq"] = {
+                        "enabled": True,
+                        "interval": int(interval),
+                        "changed": bool(changed),
+                        "restored": bool(restored)
+                    }
+                else:
+                    tag["daq"] = {
+                        "enabled": False,
+                        "interval": int(interval),
+                        "changed": False,
+                        "restored": False
+                    }
+                dev_tags_updated += 1
+                total_tags_updated += 1
+
+            if dev_tags_updated > 0:
+                cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(d_obj), d_key))
+                devices_updated += 1
+                action_word = "ENABLED" if enable else "DISABLED"
+                change_note = " (log on change + interval)" if (enable and changed) else ""
+                print(f"[✓] {action_word} DAQ for {dev_tags_updated} tags in device '{d_name}' [interval={interval}s{change_note}]")
+
+        except Exception as e:
+            print(f"[!] Error updating DAQ for device '{d_key}': {e}")
+
+    conn.commit()
+    action_str = "enabled" if enable else "disabled"
+    print(f"\n[✓] Successfully {action_str} DAQ (Historical Logging) for {total_tags_updated} tags across {devices_updated} devices.")
+    return devices_updated, total_tags_updated
+
 def main():
     parser = argparse.ArgumentParser(description="FUXA Device Manager Utility")
     parser.add_argument("--db", type=str, help="Path to project.fuxap.db (optional, auto-detected if omitted)")
@@ -497,6 +570,12 @@ def main():
     parser.add_argument("--disable", type=str, help="Disable a device by Name or ID so FUXA does not poll it")
     parser.add_argument("--enable", type=str, help="Enable a previously disabled device by Name or ID")
     parser.add_argument("--rename", nargs=2, metavar=("DEVICE_ID", "NEW_NAME"), help="Rename device by ID to NEW_NAME")
+    parser.add_argument("--enable-daq", action="store_true", help="Bulk enable DAQ (Historical Logging) for all tags (or target device)")
+    parser.add_argument("--disable-daq", action="store_true", help="Bulk disable DAQ (Historical Logging) for all tags (or target device)")
+    parser.add_argument("--device", type=str, help="Target specific device Name or ID for DAQ operations (default: all devices)")
+    parser.add_argument("--interval", type=int, default=60, help="Historical logging interval in seconds (default: 60)")
+    parser.add_argument("--no-change", action="store_true", help="Do not log on value change (default: logs on value change + interval)")
+    parser.add_argument("--restore", action="store_true", help="Restore tag with last saved value on startup (default: False)")
 
     args = parser.parse_args()
 
@@ -519,13 +598,21 @@ def main():
     print(f"[i] Using database: {db_path}")
 
     # Create backup before any destructive operation
-    if args.dedup or args.remove or args.remove_name or args.rename or args.repair:
+    if args.dedup or args.remove or args.remove_name or args.rename or args.repair or args.enable_daq or args.disable_daq:
         backup_database(db_path)
 
     conn = sqlite3.connect(db_path)
 
     try:
-        if args.repair:
+        if args.enable_daq:
+            bulk_set_daq(conn, plant_id=args.plant, device_name_or_id=args.device,
+                         enable=True, interval=args.interval, changed=(not args.no_change), restored=args.restore)
+            list_devices(conn)
+        elif args.disable_daq:
+            bulk_set_daq(conn, plant_id=args.plant, device_name_or_id=args.device,
+                         enable=False, interval=args.interval, changed=False, restored=False)
+            list_devices(conn)
+        elif args.repair:
             repair_hmi_layout(conn, plant_id=args.plant)
             list_devices(conn)
         elif args.dedup:
@@ -552,7 +639,7 @@ def main():
     finally:
         conn.close()
 
-    if args.dedup or args.remove or args.remove_name or args.rename or args.repair:
+    if args.dedup or args.remove or args.remove_name or args.rename or args.repair or args.enable_daq or args.disable_daq:
         print("\n[📢] Database updated. If FUXA is running, reload or restart PM2 to apply changes:")
         if args.plant:
             print(f"     pm2 restart P{args.plant}_Storage_Server")
