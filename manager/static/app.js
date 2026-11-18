@@ -222,6 +222,7 @@ function renderInstancesList() {
                     <button onclick="openDiagnosticsModal('${inst.id}')" class="btn btn-secondary btn-sm" style="color: #38bdf8;" title="View Exact Fault Diagnostics">🩺 Diag</button>
                 `}
                 <button onclick="openMigrateModal('${inst.id}', 'view')" class="btn btn-secondary btn-sm" title="Import Dashboards (.json/.fuxap) into this View Server" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">📥 Import</button>
+                <button onclick="openVsDevicesModal('${inst.id}')" class="btn btn-secondary btn-sm" title="Manage Connected Devices for this View Server" style="color: #60a5fa; border-color: rgba(59, 130, 246, 0.4);">🔌 Devices</button>
                 <button onclick="syncTags('${inst.id}')" class="btn btn-secondary btn-sm" title="Sync Plant Storage Tags into this View Server">🔄 Sync Tags</button>
                 <button onclick="editInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Edit View Server">✏️ Edit</button>
                 <button onclick="viewLogs('${inst.id}')" class="btn btn-secondary btn-sm" title="View Logs">Logs</button>
@@ -1710,6 +1711,165 @@ async function saveDeviceTopology() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = '💾 Save & Rearrange Tree';
+    }
+}
+
+// ==============================================================================
+// 8. View Server Connected Device Manager
+// ==============================================================================
+let currentVsInstanceId = null;
+let vsAvailableStorageDevices = [];
+let vsSelectedDeviceIds = new Set();
+
+async function openVsDevicesModal(instanceId) {
+    currentVsInstanceId = instanceId;
+    const modal = document.getElementById('vs-devices-modal');
+    if (!modal) return;
+    modal.classList.add('show');
+
+    const titleEl = document.getElementById('vs-devices-title');
+    const tbody = document.getElementById('vs-devices-tbody');
+    const resBox = document.getElementById('vs-devices-results');
+    if (resBox) resBox.style.display = 'none';
+
+    if (titleEl) {
+        titleEl.textContent = `🔌 Manage Devices for View Server (${instanceId})`;
+    }
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="5" style="padding: 24px; text-align: center; color: #94a3b8;">⏳ Loading devices...</td></tr>';
+    }
+
+    try {
+        const resp = await fetch(`/api/instances/${instanceId}/devices`);
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            vsAvailableStorageDevices = data.storage_devices || [];
+            vsSelectedDeviceIds = new Set((data.configured_devices || []).map(d => d.id));
+            if (titleEl) {
+                titleEl.textContent = `🔌 Devices for View Server: ${instanceId} (Port ${data.port})`;
+            }
+            renderVsDevicesTable();
+        } else {
+            throw new Error(data.detail || 'Failed to load instance devices');
+        }
+    } catch (err) {
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="5" style="padding: 24px; text-align: center; color: #f87171;">❌ Error loading devices: ${err.message}</td></tr>`;
+        }
+    }
+}
+
+function closeVsDevicesModal() {
+    const modal = document.getElementById('vs-devices-modal');
+    if (modal) modal.classList.remove('show');
+}
+
+function renderVsDevicesTable() {
+    const tbody = document.getElementById('vs-devices-tbody');
+    const countEl = document.getElementById('vs-devices-selected-count');
+    if (countEl) countEl.textContent = vsSelectedDeviceIds.size;
+
+    if (!tbody) return;
+    if (vsAvailableStorageDevices.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="padding: 24px; text-align: center; color: #94a3b8;">No storage devices found in Central Storage for this plant.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = vsAvailableStorageDevices.map(dev => {
+        const isChecked = vsSelectedDeviceIds.has(dev.id) || vsSelectedDeviceIds.has(dev.name);
+        return `
+            <tr style="border-bottom: 1px solid #1e293b; background: ${isChecked ? 'rgba(59, 130, 246, 0.08)' : 'transparent'};">
+                <td style="padding: 8px 12px; text-align: center;">
+                    <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleVsDevice('${dev.id}', this.checked)" style="cursor: pointer;">
+                </td>
+                <td style="padding: 8px 12px; font-weight: 600; color: #f8fafc;">
+                    ${dev.name || dev.id}
+                </td>
+                <td style="padding: 8px 12px;">
+                    <span style="background: rgba(148, 163, 184, 0.12); color: #cbd5e1; padding: 2px 6px; border-radius: 4px; font-size: 0.72rem; font-family: monospace;">
+                        ${dev.type}
+                    </span>
+                </td>
+                <td style="padding: 8px 12px; color: #94a3b8; font-size: 0.75rem; font-family: monospace;">
+                    ${dev.address || '—'}
+                </td>
+                <td style="padding: 8px 12px; text-align: center; color: #38bdf8; font-weight: 700;">
+                    ${dev.tag_count || 0}
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function toggleVsDevice(devId, isChecked) {
+    if (isChecked) {
+        vsSelectedDeviceIds.add(devId);
+    } else {
+        vsSelectedDeviceIds.delete(devId);
+    }
+    renderVsDevicesTable();
+}
+
+function toggleVsDevicesAll(selectAll) {
+    if (selectAll) {
+        vsAvailableStorageDevices.forEach(d => vsSelectedDeviceIds.add(d.id));
+    } else {
+        vsSelectedDeviceIds.clear();
+    }
+    renderVsDevicesTable();
+}
+
+async function submitVsDevices() {
+    if (!currentVsInstanceId) return;
+    const btn = document.getElementById('btn-save-vs-devices');
+    const resBox = document.getElementById('vs-devices-results');
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Saving & Restarting View Server...';
+    }
+    if (resBox) {
+        resBox.style.display = 'block';
+        resBox.style.background = '#0f172a';
+        resBox.style.border = '1px solid #334155';
+        resBox.style.color = '#94a3b8';
+        resBox.innerHTML = 'Applying device connections and restoring real PLC endpoints...';
+    }
+
+    try {
+        const resp = await fetch(`/api/instances/${currentVsInstanceId}/set-devices`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_ids: Array.from(vsSelectedDeviceIds) })
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.success) {
+            if (resBox) {
+                resBox.style.background = '#064e3b';
+                resBox.style.border = '1px solid #10b981';
+                resBox.style.color = '#a7f3d0';
+                resBox.innerHTML = `✓ ${data.message || 'Devices updated successfully!'}`;
+            }
+            setTimeout(() => {
+                closeVsDevicesModal();
+                loadMatrix();
+            }, 1200);
+        } else {
+            throw new Error(data.detail || data.message || 'Failed to update devices');
+        }
+    } catch (err) {
+        if (resBox) {
+            resBox.style.background = 'rgba(239, 68, 68, 0.15)';
+            resBox.style.border = '1px solid #ef4444';
+            resBox.style.color = '#fca5a5';
+            resBox.innerHTML = `❌ Error: ${err.message}`;
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '💾 Save & Apply Devices';
+        }
     }
 }
 

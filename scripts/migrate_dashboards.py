@@ -209,15 +209,16 @@ def sync_matching_storage_devices_to_view(
             match_reason = f"Hardware Signature match ({sig})"
 
         if matched_s_dev:
-            # Prepare View Server bridged device entry (strictly NO historical DAQ on View Servers)
-            bridged_dev = json.loads(json.dumps(matched_s_dev))
-            bridged_dev["type"] = "OPCUA"
+            # Prepare View Server device entry: Preserve REAL PLC protocol, address & options from Storage Server
+            bridged_dev = strip_historical_daq_for_view(matched_s_dev)
+            real_type = matched_s_dev.get("type", "OPCUA")
+            bridged_dev["type"] = real_type
+            real_props = dict(matched_s_dev.get("property") or {})
+            bridged_dev["property"] = real_props
+            dev_conn = matched_s_dev.get("connection") or ("opc-ua" if real_type == "OPCUA" else real_type.lower())
             bridged_dev["enabled"] = True
             bridged_dev["polling"] = 1000
             bridged_dev["influxdb_logging"] = False
-            if "property" not in bridged_dev or not bridged_dev["property"]:
-                bridged_dev["property"] = {}
-            bridged_dev["property"]["address"] = plant_endpoint
 
             # Strictly strip and disable any DAQ / historical logging on tags
             tags = bridged_dev.get("tags") or {}
@@ -232,14 +233,15 @@ def sync_matching_storage_devices_to_view(
             bridged_dev["tags"] = tags
 
             tag_count = len(tags)
-            devices_to_inject.append(bridged_dev)
+            devices_to_inject.append((bridged_dev, dev_conn))
             report["matched_from_storage"].append({
                 "source_name": dev_name,
                 "storage_name": matched_s_dev.get("name"),
                 "tags_count": tag_count,
                 "reason": match_reason
             })
-            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags, DAQ disabled) [{match_reason}]")
+            plc_addr = real_props.get("address") or real_props.get("endpoint") or "configured"
+            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags, Protocol: {real_type}, Address: {plc_addr}, DAQ: disabled)")
         else:
             report["missing_in_storage"].append(dev_name)
             print(f"    ⚠️ Notice: Device '{dev_name}' ({dev_type}) is NOT yet configured in Plant {plant_id} Storage Server.")
@@ -248,13 +250,18 @@ def sync_matching_storage_devices_to_view(
     if not dry_run and devices_to_inject:
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
+        cur.execute("PRAGMA busy_timeout = 5000;")
         cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
-        for b_dev in devices_to_inject:
+        for b_dev, dev_conn in devices_to_inject:
             cur.execute(
                 "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                (b_dev["id"], json.dumps(b_dev), "opc-ua", "", "")
+                (b_dev["id"], json.dumps(b_dev), dev_conn, "", "")
             )
         conn.commit()
+        try:
+            cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        except Exception:
+            pass
         conn.close()
         print(f"[+] Successfully injected {len(devices_to_inject)} matched Storage device(s) into View Server database.")
 

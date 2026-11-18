@@ -1040,6 +1040,231 @@ def sync_instance_tags(instance_id: str):
         "message": f"Successfully synced {tag_count} Plant {plant_id} Storage tags to View Server on Port {port}!"
     }
 
+@app.get("/api/instances/{instance_id}/devices")
+def api_get_instance_devices(instance_id: str):
+    """Returns devices currently configured in this View Server and all available Storage devices"""
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    inst = instances[instance_id]
+    port = inst.get("port")
+    plant_id = inst.get("plant", 9)
+    work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+
+    configured_devices = []
+    db_path = os.path.join(work_dir, "project.fuxap.db")
+    if not os.path.exists(db_path):
+        db_path = os.path.join(work_dir, "_appdata", "project.fuxap.db")
+
+    if os.path.exists(db_path):
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cur = conn.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+            cur.execute("SELECT name, value, connection FROM devices WHERE name != 'server' AND name != '0';")
+            for d_name, d_val, d_conn in cur.fetchall():
+                try:
+                    d_obj = json.loads(d_val)
+                    props = d_obj.get("property") or {}
+                    configured_devices.append({
+                        "id": str(d_obj.get("id") or d_name),
+                        "name": str(d_obj.get("name") or d_name),
+                        "type": str(d_obj.get("type") or "OPCUA"),
+                        "address": str(props.get("address") or props.get("endpoint") or "—"),
+                        "tag_count": len(d_obj.get("tags") or {}),
+                        "connection": d_conn or "opc-ua"
+                    })
+                except Exception:
+                    pass
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error reading configured devices from {db_path}: {e}")
+
+    storage_catalog = get_storage_devices_catalog(int(plant_id), base_dir=BASE_DIR)
+    available_storage = []
+    for s_dev in storage_catalog:
+        props = s_dev.get("property") or {}
+        available_storage.append({
+            "id": s_dev["id"],
+            "name": s_dev["name"],
+            "type": s_dev.get("type", "OPCUA"),
+            "address": props.get("address") or "—",
+            "tag_count": s_dev.get("tag_count", len(s_dev.get("tags") or {})),
+            "location": s_dev.get("location", "")
+        })
+
+    return {
+        "success": True,
+        "instance_id": instance_id,
+        "port": port,
+        "plant": plant_id,
+        "configured_devices": configured_devices,
+        "storage_devices": available_storage
+    }
+
+@app.post("/api/instances/{instance_id}/set-devices")
+async def api_set_instance_devices(instance_id: str, request: Request):
+    """
+    Sets the exact list of storage devices attached to this View Server.
+    Preserves real PLC addresses and protocols, disables DAQ, and restarts the View Server.
+    """
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    body = await request.json()
+    device_ids = set(str(d) for d in body.get("device_ids", []))
+
+    inst = instances[instance_id]
+    port = inst.get("port")
+    plant_id = inst.get("plant", 9)
+    work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+
+    storage_catalog = get_storage_devices_catalog(int(plant_id), base_dir=BASE_DIR)
+    storage_by_id = {s["id"]: s for s in storage_catalog}
+    storage_by_name = {s["name"]: s for s in storage_catalog}
+
+    from project_builder import strip_historical_daq_for_view
+
+    db_paths = [
+        os.path.join(work_dir, "project.fuxap.db"),
+        os.path.join(work_dir, "_appdata", "project.fuxap.db")
+    ]
+
+    for dbp in db_paths:
+        if not os.path.exists(os.path.dirname(dbp)):
+            os.makedirs(os.path.dirname(dbp), exist_ok=True)
+        try:
+            conn = sqlite3.connect(dbp, timeout=10.0)
+            cur = conn.cursor()
+            cur.execute("PRAGMA busy_timeout = 5000;")
+            cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+
+            # Remove unselected non-server devices
+            cur.execute("SELECT name, value FROM devices WHERE name != 'server' AND name != '0';")
+            for d_name, d_val in cur.fetchall():
+                try:
+                    d_obj = json.loads(d_val)
+                    did = str(d_obj.get("id") or d_name)
+                    dname = str(d_obj.get("name") or d_name)
+                    if did not in device_ids and dname not in device_ids:
+                        cur.execute("DELETE FROM devices WHERE name = ?;", (d_name,))
+                except Exception:
+                    pass
+
+            # Inject / update selected storage devices
+            for dev_id in device_ids:
+                s_dev = storage_by_id.get(dev_id) or storage_by_name.get(dev_id)
+                if not s_dev:
+                    continue
+                clean_dev = strip_historical_daq_for_view(s_dev)
+                real_type = s_dev.get("type", "OPCUA")
+                clean_dev["type"] = real_type
+                clean_dev["property"] = dict(s_dev.get("property") or {})
+                clean_dev["enabled"] = True
+                clean_dev["polling"] = 1000
+                dev_conn = s_dev.get("connection") or ("opc-ua" if real_type == "OPCUA" else real_type.lower())
+
+                cur.execute(
+                    "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
+                    (clean_dev["id"], json.dumps(clean_dev), dev_conn, "", "")
+                )
+
+            conn.commit()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+            conn.close()
+
+            for suf in ["-wal", "-shm"]:
+                lf = dbp + suf
+                if os.path.exists(lf):
+                    try: os.remove(lf)
+                    except Exception: pass
+        except Exception as e:
+            logger.error(f"Error configuring devices in {dbp}: {e}")
+
+    # Seamlessly restart View Server
+    if port_engine.is_port_in_use(port):
+        stop_instance(instance_id)
+        subpath = inst.get("subpath", f"/p{plant_id}/div1/l1")
+        pid = _launch_fuxa_instance(instance_id, port, work_dir, subpath)
+        inst["pid"] = pid
+        inst["status"] = "RUNNING" if pid else "STOPPED"
+        port_engine.register_instance(instance_id, inst)
+
+    return {
+        "success": True,
+        "instance_id": instance_id,
+        "selected_count": len(device_ids),
+        "message": f"Successfully updated devices for View Server {instance_id}! Server restarted and polling real PLCs."
+    }
+
+@app.post("/api/instances/{instance_id}/remove-device")
+async def api_remove_instance_device(instance_id: str, request: Request):
+    """Removes a single device from this View Server and restarts it"""
+    instances = port_engine.get_all_instances()
+    if instance_id not in instances:
+        raise HTTPException(status_code=404, detail="Instance not found")
+
+    body = await request.json()
+    device_id = str(body.get("device_id") or "").strip()
+    if not device_id or device_id in ("server", "0"):
+        raise HTTPException(status_code=400, detail="Invalid device_id")
+
+    inst = instances[instance_id]
+    port = inst.get("port")
+    plant_id = inst.get("plant", 9)
+    work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+
+    db_paths = [
+        os.path.join(work_dir, "project.fuxap.db"),
+        os.path.join(work_dir, "_appdata", "project.fuxap.db")
+    ]
+
+    for dbp in db_paths:
+        if not os.path.exists(dbp):
+            continue
+        try:
+            conn = sqlite3.connect(dbp, timeout=5.0)
+            cur = conn.cursor()
+            cur.execute("PRAGMA busy_timeout = 5000;")
+            cur.execute("DELETE FROM devices WHERE name = ?;", (device_id,))
+            cur.execute("SELECT name, value FROM devices WHERE name != 'server' AND name != '0';")
+            for d_name, d_val in cur.fetchall():
+                try:
+                    d_obj = json.loads(d_val)
+                    if str(d_obj.get("id")) == device_id or str(d_obj.get("name")) == device_id:
+                        cur.execute("DELETE FROM devices WHERE name = ?;", (d_name,))
+                except Exception:
+                    pass
+            conn.commit()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+            conn.close()
+            for suf in ["-wal", "-shm"]:
+                lf = dbp + suf
+                if os.path.exists(lf):
+                    try: os.remove(lf)
+                    except Exception: pass
+        except Exception as e:
+            logger.error(f"Error removing device {device_id} from {dbp}: {e}")
+
+    # Seamlessly restart View Server
+    if port_engine.is_port_in_use(port):
+        stop_instance(instance_id)
+        subpath = inst.get("subpath", f"/p{plant_id}/div1/l1")
+        pid = _launch_fuxa_instance(instance_id, port, work_dir, subpath)
+        inst["pid"] = pid
+        inst["status"] = "RUNNING" if pid else "STOPPED"
+        port_engine.register_instance(instance_id, inst)
+
+    return {"success": True, "message": f"Device '{device_id}' removed from View Server {instance_id}."}
+
 @app.post("/api/sync-all-tags")
 def sync_all_tags():
     """Syncs storage server tags to all view servers across the entire fleet"""

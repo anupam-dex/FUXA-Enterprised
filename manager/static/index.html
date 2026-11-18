@@ -760,6 +760,56 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=13"></script>
+    <!-- View Server Device Manager Modal -->
+    <div id="vs-devices-modal" class="modal-backdrop">
+        <div class="modal-content" style="max-width: 720px; background: #0f172a; border: 1px solid #334155; border-radius: 12px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7); overflow: hidden;">
+            <div class="modal-header" style="background: #1e293b; border-bottom: 1px solid #334155; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.3rem;">🔌</span>
+                    <div>
+                        <h3 id="vs-devices-title" style="margin: 0; font-size: 1.15rem; color: #f8fafc;">Manage View Server Devices</h3>
+                        <div style="font-size: 0.78rem; color: var(--text-muted);">Choose which physical devices to connect to this View Server. Tags poll directly from real PLCs with historical DAQ disabled.</div>
+                    </div>
+                </div>
+                <button class="btn-close" onclick="closeVsDevicesModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <div style="font-size: 0.82rem; color: #94a3b8;">
+                        Selected: <strong id="vs-devices-selected-count" style="color: #38bdf8;">0</strong> device(s)
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleVsDevicesAll(true)" style="font-size: 0.75rem; padding: 3px 8px;">Check All</button>
+                        <button type="button" class="btn btn-sm btn-secondary" onclick="toggleVsDevicesAll(false)" style="font-size: 0.75rem; padding: 3px 8px;">Uncheck All</button>
+                    </div>
+                </div>
+                <div style="max-height: 380px; overflow-y: auto; border: 1px solid #334155; border-radius: 6px; background: #0b1120;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left;">
+                        <thead style="position: sticky; top: 0; background: #1e293b; color: #cbd5e1; z-index: 10;">
+                            <tr>
+                                <th style="padding: 8px 12px; width: 44px; text-align: center;">Attach</th>
+                                <th style="padding: 8px 12px;">Device Name</th>
+                                <th style="padding: 8px 12px; width: 90px;">Protocol</th>
+                                <th style="padding: 8px 12px;">Real Hardware IP / Endpoint</th>
+                                <th style="padding: 8px 12px; width: 50px; text-align: center;">Tags</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vs-devices-tbody">
+                            <tr><td colspan="5" style="padding: 24px; text-align: center; color: #94a3b8;">Loading devices...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="vs-devices-results" style="display: none; margin-top: 10px; border-radius: 6px; padding: 10px 14px; font-size: 0.82rem;"></div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <button class="btn btn-secondary" onclick="closeVsDevicesModal()">Cancel</button>
+                <button id="btn-save-vs-devices" class="btn btn-primary" onclick="submitVsDevices()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border-color: #3b82f6; font-weight: 700;">
+                    💾 Save & Apply Devices
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=14"></script>
 </body>
 </html>

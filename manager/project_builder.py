@@ -161,6 +161,15 @@ def get_storage_devices_catalog(plant_id: int, base_dir: str = None, opcua_endpo
                             dev_loc = dev.get("location") or dev_prop.get("location") or dev.get("topology", {}).get("location") or ""
                             dev_subdiv = dev.get("subdivision") or dev_prop.get("subdivision") or dev.get("topology", {}).get("subdivision") or ""
 
+                            full_prop = dict(dev_prop)
+                            full_prop["location"] = dev_loc
+                            full_prop["subdivision"] = dev_subdiv
+                            if "address" not in full_prop and endpoint:
+                                full_prop["address"] = endpoint
+
+                            dev_type = dev.get("type", "OPCUA")
+                            dev_conn = dev.get("connection") or ("opc-ua" if dev_type == "OPCUA" else dev_type.lower())
+
                             devices.append({
                                 "device_key": dev_name.replace(" ", "_"),
                                 "id": dev.get("id") or d_name,
@@ -168,20 +177,13 @@ def get_storage_devices_catalog(plant_id: int, base_dir: str = None, opcua_endpo
                                 "location": dev_loc,
                                 "subdivision": dev_subdiv,
                                 "division": dev.get("topology", {}).get("division_name") or dev_loc or "Central Storage",
-                                "type": dev.get("type", "OPCUA"),
+                                "type": dev_type,
+                                "connection": dev_conn,
                                 "enabled": dev.get("enabled", True),
                                 "polling": dev.get("polling", 1000),
                                 "influxdb_logging": True,
                                 "address": endpoint,
-                                "property": {
-                                    "address": endpoint,
-                                    "location": dev_loc,
-                                    "subdivision": dev_subdiv,
-                                    "options": dev_prop.get("options", {
-                                        "securityMode": "None",
-                                        "securityPolicy": "None"
-                                    })
-                                },
+                                "property": full_prop,
                                 "tag_count": len(dev_tags),
                                 "tags": dev_tags
                             })
@@ -463,10 +465,11 @@ def generate_fuxa_database(
 
     return db_path
 
-def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = None) -> dict:
+def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = None, only_existing: bool = True) -> dict:
     """
     Syncs the latest Plant Storage Server tags into an existing View Server SQLite database.
-    Preserves existing user tags and layouts while ensuring all Storage tags are up to date.
+    Preserves user devices, real hardware connection endpoints, and layouts.
+    Strictly keeps historical DAQ disabled on View Servers.
     """
     db_path = os.path.join(target_dir, "project.fuxap.db")
     if not os.path.exists(db_path):
@@ -477,57 +480,67 @@ def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = N
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    cur.execute("PRAGMA busy_timeout = 5000;")
+    cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
 
-    plant_endpoint = get_plant_opcua_endpoint(plant_id)
+    # Get devices currently in this View Server
+    cur.execute("SELECT name FROM devices WHERE name != 'server' AND name != '0';")
+    existing_dev_names = {row[0] for row in cur.fetchall()}
 
-    # Pre-populate / sync individual storage devices connected to InfluxDB (strictly NO historical DAQ on View Servers)
+    # If only_existing is True but the View Server database currently has 0 devices (brand new),
+    # allow initial population from storage if desired, otherwise preserve empty state
     for dev_id, dev_obj in storage_devices.items():
+        dev_name = dev_obj.get("name", dev_id)
+        if only_existing and dev_id not in existing_dev_names and dev_name not in existing_dev_names:
+            continue
+
         clean_dev = strip_historical_daq_for_view(dev_obj)
-        cur.execute("SELECT value, connection, cntid, cntpwd FROM devices WHERE name = ?;", (dev_id,))
+        real_type = clean_dev.get("type", "OPCUA")
+        real_prop = dict(clean_dev.get("property") or {})
+        dev_conn = clean_dev.get("connection") or ("opc-ua" if real_type == "OPCUA" else real_type.lower())
+
+        target_row_key = dev_id if dev_id in existing_dev_names else dev_name
+        cur.execute("SELECT value, connection FROM devices WHERE name = ?;", (target_row_key,))
         row = cur.fetchone()
         if row:
-            dev_data = json.loads(row[0])
+            try:
+                dev_data = json.loads(row[0])
+            except Exception:
+                dev_data = clean_dev
+
+            # Update tags with latest from storage
             existing_tags = dev_data.get("tags", {})
             for t_id, t_info in clean_dev["tags"].items():
                 existing_tags[t_id] = t_info
             dev_data["tags"] = existing_tags
-            if "property" not in dev_data or not dev_data["property"]:
-                dev_data["property"] = {}
-            dev_data["property"]["address"] = plant_endpoint
+
+            # RESTORE REAL PLC ENDPOINT AND PROTOCOL
+            dev_data["property"] = real_prop
+            dev_data["type"] = real_type
             dev_data["enabled"] = True
-            dev_data["polling"] = 1000
+            dev_data["polling"] = dev_data.get("polling", 1000)
             dev_data["influxdb_logging"] = False
-            # Strip Sim_ prefix if present
-            if dev_data.get("name", "").startswith("Sim_"):
-                dev_data["name"] = dev_data["name"].replace("Sim_", "", 1)
+
             # Ensure all tags have historical DAQ strictly disabled
             for t in dev_data["tags"].values():
                 if isinstance(t, dict):
                     t["daq"] = {"enabled": False, "changed": False, "interval": 0, "restored": False}
-            cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(dev_data), dev_id))
+
+            cur.execute("UPDATE devices SET value = ?, connection = ? WHERE name = ?;",
+                        (json.dumps(dev_data), dev_conn, target_row_key))
             all_tags.update(existing_tags)
-        else:
+        elif not only_existing:
             clean_dev["polling"] = 1000
-            if clean_dev.get("name", "").startswith("Sim_"):
-                clean_dev["name"] = clean_dev["name"].replace("Sim_", "", 1)
-            if "property" in clean_dev:
-                clean_dev["property"]["address"] = plant_endpoint
+            clean_dev["property"] = real_prop
+            clean_dev["type"] = real_type
             cur.execute(
                 "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                (dev_id, json.dumps(clean_dev), "opc-ua", "", "")
+                (dev_id, json.dumps(clean_dev), dev_conn, "", "")
             )
             all_tags.update(clean_dev["tags"])
 
-    # Clean up obsolete monolithic / placeholder device rows
+    # Clean up obsolete placeholder device rows
     cur.execute("DELETE FROM devices WHERE name LIKE '%storage_opcua%' OR name LIKE '%dev_opcua_plant%';")
-
-    # If storage devices were resolved, purge any non-storage devices (preserving server/0)
-    if storage_devices:
-        valid_dev_ids = set(storage_devices.keys()) | {"server", "0"}
-        cur.execute("SELECT name FROM devices;")
-        for (existing_name,) in cur.fetchall():
-            if existing_name not in valid_dev_ids:
-                cur.execute("DELETE FROM devices WHERE name = ?;", (existing_name,))
 
     # Database integrity & self-healing
     try:
