@@ -17,6 +17,7 @@ class PortEngine:
         self.registry_path = registry_path
         self.persistent_path = os.path.join(os.path.dirname(__file__), "..", "instances", "registry.json")
         self.registry = self._load_registry()
+        self._save_registry()
 
     def _default_registry(self):
         return {
@@ -181,7 +182,8 @@ class PortEngine:
                     if proj_name and not target.get("name"): target["name"] = proj_name
                     if not target.get("work_dir"): target["work_dir"] = os.path.abspath(p_dir)
 
-        # 4. Enforce valid plant, division, line on all instances
+        # 4. Enforce valid plant, division, line on all instances and sanitize work_dir paths
+        instances_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "instances"))
         for inst_id, inst in list(data["instances"].items()):
             p_num = inst.get("port")
             if p_num:
@@ -192,6 +194,11 @@ class PortEngine:
                     inst["division"] = int(p_str[1]) if len(p_str) >= 4 else 6
                 if not inst.get("line"):
                     inst["line"] = int(p_str[2]) if len(p_str) >= 4 else 1
+
+                canonical_work_dir = os.path.abspath(os.path.join(instances_dir, f"port_{p_num}"))
+                stored_work_dir = inst.get("work_dir")
+                if not stored_work_dir or not os.path.exists(stored_work_dir) or "FUXA-Enterprised-master" in str(stored_work_dir) or os.path.abspath(stored_work_dir) != canonical_work_dir:
+                    inst["work_dir"] = canonical_work_dir
 
         return data
 

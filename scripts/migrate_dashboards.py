@@ -98,20 +98,34 @@ def get_target_db_path(target: str) -> tuple[str, str, int, int]:
         port = matched_inst["port"]
         inst_id = matched_inst["id"]
         plant_id = int(matched_inst.get("plant", 9))
-        work_dir = matched_inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+        canonical_work_dir = os.path.abspath(os.path.join(INSTANCES_DIR, f"port_{port}"))
+        work_dir = matched_inst.get("work_dir")
+        if not work_dir or not os.path.exists(work_dir) or "FUXA-Enterprised-master" in str(work_dir):
+            work_dir = canonical_work_dir
     else:
         # Fallback to port folder
         if target_str.isdigit():
             port = int(target_str)
             inst_id = f"port_{port}"
             plant_id = int(str(port)[1]) if str(port).startswith("5") and len(str(port)) >= 4 else 9
-            work_dir = os.path.join(INSTANCES_DIR, f"port_{port}")
+            work_dir = os.path.abspath(os.path.join(INSTANCES_DIR, f"port_{port}"))
         else:
             raise ValueError(f"Could not identify View Server instance for '{target}'. Check Fleet Manager.")
 
     db_path = os.path.join(work_dir, "project.fuxap.db")
     if not os.path.exists(db_path):
-        raise FileNotFoundError(f"Target View Server database not found at {db_path}")
+        os.makedirs(work_dir, exist_ok=True)
+        from project_builder import generate_fuxa_database
+        print(f"[*] Target View Server database not found at {db_path}. Auto-generating initial database...")
+        db_path = generate_fuxa_database(
+            target_dir=work_dir,
+            plant_id=plant_id,
+            division_name=f"Plant {plant_id}",
+            line_name=f"Line {port}",
+            project_name=matched_inst.get("name") if matched_inst else f"View Server Port {port}",
+            opcua_endpoint=get_plant_opcua_endpoint(plant_id),
+            base_dir=BASE_DIR
+        )
 
     return db_path, inst_id, port, plant_id
 
