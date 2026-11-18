@@ -1,35 +1,35 @@
 {
   "plants": {
     "1": {
-      "name": "Plant 1 - Foundry & Powerhouse",
+      "name": "Plant 1",
       "storage_port": 5100
     },
     "2": {
-      "name": "Plant 2 - Stamping & Press",
+      "name": "Plant 2",
       "storage_port": 5200
     },
     "3": {
-      "name": "Plant 3 - Body & Assembly",
+      "name": "Plant 3",
       "storage_port": 5300
     },
     "4": {
-      "name": "Plant 4 - Powertrain & Engine",
+      "name": "Plant 4",
       "storage_port": 5400
     },
     "9": {
-      "name": "Plant 9 - Paintshop Complex",
+      "name": "Plant 9",
       "storage_port": 5900
     }
   },
   "divisions": {
-    "1": "Body Shop",
-    "2": "Stamping",
-    "3": "Assembly",
-    "4": "Quality & Inspection",
-    "5": "Utility & Boiler",
+    "1": "Vehicle Assembly",
+    "2": "Engine Assembly",
+    "3": "Export Warehouse",
+    "4": "MHE",
+    "5": "Utilities",
     "6": "Paintshop",
-    "7": "Robotics & Automation",
-    "8": "Material Handling"
+    "7": "Safety",
+    "8": "Faults"
   },
   "instances": {
     "fuxa_p9_d6_l1_9610": {
