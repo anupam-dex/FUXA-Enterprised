@@ -65,8 +65,18 @@ def process_stream():
                 current_color = GRAY
             continue
 
-        # Ignore noisy Node.js internal deprecation warnings
-        if "punycode" in line or "--trace-deprecation" in line:
+        # Ignore noisy third-party and Node.js internal background chatter
+        noisy_patterns = [
+            "punycode",
+            "--trace-deprecation",
+            "add_node: while adding node",
+            "requested parent node",
+            "does not exists",
+            "No signing policy available",
+            "No encrypting policy available",
+            "starting internal server"
+        ]
+        if any(pat in line for pat in noisy_patterns):
             continue
 
         is_error = bool(re.search(

@@ -27,6 +27,10 @@ from asyncua import Server, ua
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("PlantOPCUABridge")
 
+# Suppress noisy internal schema/XML parsing notices and policy warnings from asyncua
+for _ua_logger in ["asyncua", "asyncua.server", "asyncua.address_space", "asyncua.uaprotocol", "asyncua.crypto"]:
+    logging.getLogger(_ua_logger).setLevel(logging.ERROR)
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 INSTANCES_DIR = os.path.join(BASE_DIR, "instances")
