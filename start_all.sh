@@ -73,12 +73,51 @@ done
 
 # Force kill any lingering processes on all SCADA ports (80, 9000, 4845, Storage 5x00, View 96xx)
 echo "Notice: Ensuring all SCADA ports (80, 9000, 4845, 5100-5900, 9610-9630) are clean..."
-fuser -k 80/tcp 9000/tcp 4845/tcp 5100/tcp 5200/tcp 5300/tcp 5400/tcp 5900/tcp 9610/tcp 9611/tcp 9620/tcp 9621/tcp 9630/tcp 2>/dev/null || true
+fuser -k 80/tcp 9000/tcp 4845/tcp 4841/tcp 4842/tcp 4843/tcp 4844/tcp 4849/tcp 4850/tcp 4851/tcp 5100/tcp 5200/tcp 5300/tcp 5400/tcp 5900/tcp 9610/tcp 9611/tcp 9620/tcp 9621/tcp 9630/tcp 2>/dev/null || true
 pkill -9 -f "uvicorn.*server:app" 2>/dev/null || true
 pkill -9 -f "bridge/opcua_bridge.py" 2>/dev/null || true
 pkill -9 -f "gateway/gateway.js" 2>/dev/null || true
 pkill -9 -f "fuxa/server/main.js" 2>/dev/null || true
+pkill -9 -f "soft_opcua" 2>/dev/null || true
+pkill -9 -f "softopc" 2>/dev/null || true
+pkill -9 -f "simulator" 2>/dev/null || true
+pkill -9 -f "simulated" 2>/dev/null || true
+sudo systemctl stop soft_opcua softopc fuxa-simulator 2>/dev/null || true
 sleep 1
+
+# Purge any legacy simulated devices from instance databases
+"$VENV_PYTHON" -c "
+import glob, sqlite3, json, os
+
+instances_dir = '$SCRIPT_DIR/instances'
+dbs = glob.glob(instances_dir + '/**/project.fuxap.db', recursive=True)
+sim_kw = ('sim_', 'simulated', 'mock', 'softopc', 'boiler_01', 'press_line_a', 'conveyor_main', 'chiller_line_1', 'feed_water_pump', 'air_compressor')
+
+purged_cnt = 0
+for db in dbs:
+    try:
+        conn = sqlite3.connect(db)
+        cur = conn.cursor()
+        cur.execute(\"SELECT name, value FROM devices;\")
+        to_del = []
+        for name, val in cur.fetchall():
+            if name in ('server', '0'): continue
+            try:
+                d = json.loads(val)
+                dname = str(d.get('name') or '').lower()
+                daddr = str(d.get('property', {}).get('address') or '').lower()
+                if any(k in dname for k in sim_kw) or any(p in daddr for p in ('4849', '4850', '4851', '4852')):
+                    to_del.append(name)
+            except Exception: pass
+        for name in to_del:
+            cur.execute(\"DELETE FROM devices WHERE name = ?;\", (name,))
+        conn.commit()
+        conn.close()
+        purged_cnt += len(to_del)
+    except Exception: pass
+if purged_cnt > 0:
+    print(f'Purged {purged_cnt} legacy simulated devices across instances.')
+" 2>/dev/null || true
 
 mkdir -p "$SCRIPT_DIR/instances" 2>/dev/null || true
 if [ -n "$SUDO_USER" ]; then

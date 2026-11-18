@@ -124,25 +124,10 @@ class DedicatedPlantHub:
         await self.build_plant_address_space(objects)
 
     async def build_plant_address_space(self, parent_folder):
-        """Builds address space containing strictly this plant's machines and tags"""
-        # 1. First add default plant catalog
-        plant_cfg = PLANT_DEFAULT_DATA.get(self.plant_id)
-        if plant_cfg:
-            plant_name = f"Plant_{self.plant_id}"
-            plant_folder = await parent_folder.add_folder(self.idx, plant_name)
-            for div_name, machines in plant_cfg["divisions"].items():
-                div_folder = await plant_folder.add_folder(self.idx, div_name)
-                for machine_name, tag_list in machines.items():
-                    machine_obj = await div_folder.add_object(self.idx, machine_name)
-                    for (t_name, initial_val, t_type) in tag_list:
-                        node_id_str = f"{plant_name}.{div_name}.{machine_name}.{t_name}"
-                        node_id = ua.NodeId(node_id_str, self.idx)
-                        var = await machine_obj.add_variable(node_id, t_name, initial_val)
-                        await var.set_writable()
-                        self.nodes[f"{plant_name}_{div_name}_{machine_name}_{t_name}"] = (var, t_type)
-
-        # 2. Add extra field devices from this plant's storage server DB
+        """Builds address space containing strictly this plant's machines and tags (prioritizing real devices)"""
+        # 1. First add field devices from this plant's Central Storage server DB
         extra_devices = self.fetch_plant_storage_devices()
+        has_real_devices = False
         for dev_id, dev_data in extra_devices.items():
             raw_name = dev_data.get("name", dev_id)
             clean_name = raw_name.replace("Sim_", "").replace(" ", "_")
@@ -159,6 +144,24 @@ class DedicatedPlantHub:
                 var = await dev_folder.add_variable(self.idx, tname, init_val)
                 await var.set_writable()
                 self.nodes[f"{clean_name}_{tname}"] = (var, ttype)
+            has_real_devices = True
+
+        # 2. Only add template plant catalog if NO real field devices exist in storage server DB yet
+        if not has_real_devices:
+            plant_cfg = PLANT_DEFAULT_DATA.get(self.plant_id)
+            if plant_cfg:
+                plant_name = f"Plant_{self.plant_id}"
+                plant_folder = await parent_folder.add_folder(self.idx, plant_name)
+                for div_name, machines in plant_cfg["divisions"].items():
+                    div_folder = await plant_folder.add_folder(self.idx, div_name)
+                    for machine_name, tag_list in machines.items():
+                        machine_obj = await div_folder.add_object(self.idx, machine_name)
+                        for (t_name, initial_val, t_type) in tag_list:
+                            node_id_str = f"{plant_name}.{div_name}.{machine_name}.{t_name}"
+                            node_id = ua.NodeId(node_id_str, self.idx)
+                            var = await machine_obj.add_variable(node_id, t_name, initial_val)
+                            await var.set_writable()
+                            self.nodes[f"{plant_name}_{div_name}_{machine_name}_{t_name}"] = (var, t_type)
 
         logger.info(f"[Plant {self.plant_id} Hub :{self.port}] Initialized with {len(self.nodes)} dedicated tags.")
 

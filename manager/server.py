@@ -171,6 +171,45 @@ async def process_watchdog_loop():
 
         await asyncio.sleep(watchdog_state["interval_seconds"])
 
+def purge_all_simulated_devices():
+    """Sweeps all instances (storage and view servers) and purges all simulated devices permanently"""
+    sim_kw = ("sim_", "simulated", "mock", "softopc", "boiler_01", "press_line_a", "conveyor_main", "chiller_line_1", "feed_water_pump", "air_compressor")
+    import glob
+    dbs = glob.glob(os.path.join(INSTANCES_DIR, "**", "project.fuxap.db"), recursive=True)
+    purged_total = 0
+    for db_path in dbs:
+        try:
+            conn = sqlite3.connect(db_path, timeout=5.0)
+            cur = conn.cursor()
+            cur.execute("SELECT name, value FROM devices;")
+            to_del = []
+            for d_name, d_val in cur.fetchall():
+                if d_name in ("server", "0"):
+                    continue
+                try:
+                    dev = json.loads(d_val)
+                    d_lower = str(dev.get("name") or "").lower()
+                    props = dev.get("property") or {}
+                    addr = str(props.get("address") or props.get("endpoint") or "").lower()
+                    if any(k in d_lower for k in sim_kw) or any(p in addr for p in ("4850", "4851", "4852", "4853", "4854")):
+                        to_del.append(d_name)
+                except Exception:
+                    pass
+            for d_name in to_del:
+                cur.execute("DELETE FROM devices WHERE name = ?;", (d_name,))
+                try:
+                    cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (d_name,))
+                except Exception:
+                    pass
+            conn.commit()
+            conn.close()
+            purged_total += len(to_del)
+        except Exception:
+            pass
+    if purged_total > 0:
+        logger.info(f"[CLEANUP] Permanently purged {purged_total} simulated devices across all fleet databases.")
+    return purged_total
+
 def purge_simulated_devices_from_storage(db_path: str):
     """Purges any legacy simulated devices from database permanently"""
     if not os.path.exists(db_path):
@@ -196,6 +235,10 @@ def purge_simulated_devices_from_storage(db_path: str):
                 pass
         for d_id in to_delete:
             cur.execute("DELETE FROM devices WHERE name = ?;", (d_id,))
+            try:
+                cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (d_id,))
+            except Exception:
+                pass
             logger.info(f"Purged simulated device '{d_id}' from {db_path}")
         conn.commit()
         conn.close()
@@ -241,6 +284,9 @@ def ensure_default_storage_servers():
 @app.on_event("startup")
 async def on_startup():
     logger.info("Initializing FUXA Fleet Orchestrator...")
+    # 0. Automatically purge any legacy simulated or SoftOPC devices from all instances
+    purge_all_simulated_devices()
+
     # 1. Host storage servers for all plants by default (clean, no simulators)
     ensure_default_storage_servers()
 
@@ -1615,21 +1661,19 @@ async def api_update_device_topology(plant_id: int, request: Request):
 
 
 @app.post("/api/storage/{plant_id}/purge-simulated-devices")
-def api_purge_simulated_devices(plant_id: int):
+@app.post("/api/storage/purge-simulated-devices")
+def api_purge_simulated_devices(plant_id: int = 9):
     """
     Permanently purges all simulated demo devices (Oven Line 1, Spray Booth Line 1,
-    Pre Treatment Line 1, SoftOPC port 4849/4850) from both root and _appdata databases,
+    Pre Treatment Line 1, SoftOPC port 4849/4850) from all root and _appdata databases,
     checkpoints SQLite, and restarts Central Storage.
     """
     plant_id = int(plant_id)
     storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
     storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
 
-    db_paths = [
-        os.path.join(storage_work_dir, "project.fuxap.db"),
-        os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
-    ]
-    purged_total = 0
+    # Sweep entire fleet for any simulated devices
+    purged_total = purge_all_simulated_devices()
     for db_path in db_paths:
         if not os.path.exists(db_path):
             continue
