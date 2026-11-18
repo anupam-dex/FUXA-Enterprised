@@ -711,9 +711,6 @@ async function deleteBackup(filename) {
 // 1-Click Dashboard & View Migration (project.json / .fuxap)
 // ==============================================================================
 let selectedMigrateFile = null;
-let migrateSourceMode = 'file'; // 'file' or 'url'
-
-let selectedMigrateFile = null;
 let selectedMigrateFiles = [];
 let migrateSourceMode = 'file'; // 'file' or 'url'
 let migrateDestination = 'storage'; // 'storage' or 'view'

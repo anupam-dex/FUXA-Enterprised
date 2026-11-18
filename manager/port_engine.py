@@ -10,6 +10,7 @@ import os
 import psutil
 
 REGISTRY_FILE = os.path.join(os.path.dirname(__file__), "registry.json")
+INSTANCES_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "instances"))
 
 class PortEngine:
     def __init__(self, registry_path=REGISTRY_FILE):
