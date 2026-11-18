@@ -289,18 +289,13 @@ def generate_fuxa_database(
     os.makedirs(target_dir, exist_ok=True)
     db_path = os.path.join(target_dir, "project.fuxap.db")
 
-    proj_title = (project_name.strip() if project_name and project_name.strip() 
-                  else f"Plant {plant_id} - {division_name} ({line_name})")
-
-    # Format headline text as requested: "Plant X <Title> Monitoring Dashboard"
-    line_display = line_name.upper() if line_name else "LINE"
-    headline_text = f"Plant {plant_id} {line_display} Monitoring Dashboard"
     if project_name and project_name.strip():
-        p_clean = project_name.strip()
-        if "dashboard" in p_clean.lower():
-            headline_text = p_clean
-        else:
-            headline_text = f"Plant {plant_id} {p_clean} Monitoring Dashboard"
+        headline_text = project_name.strip()
+        proj_title = project_name.strip()
+    else:
+        line_display = line_name.upper() if line_name else "LINE"
+        headline_text = f"Plant {plant_id} {line_display} Monitoring Dashboard"
+        proj_title = f"Plant {plant_id} - {division_name} ({line_name})"
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -688,6 +683,23 @@ def update_project_name_in_db(db_path: str, new_name: str) -> bool:
                 if "header" in g and isinstance(g["header"], dict):
                     g["header"]["title"] = new_name
                 cur.execute("UPDATE general SET value = ? WHERE name = 'general';", (json.dumps(g),))
+            except Exception:
+                pass
+        # 3. Update layout header headline text if present
+        cur.execute("SELECT value FROM general WHERE name = 'layout';")
+        l_row = cur.fetchone()
+        if l_row:
+            try:
+                l = json.loads(l_row[0])
+                if "header" in l and isinstance(l["header"], dict):
+                    l["header"]["title"] = new_name
+                    if "items" in l["header"] and isinstance(l["header"]["items"], list):
+                        for it in l["header"]["items"]:
+                            if it.get("id") == "header_headline" or it.get("type") == "label":
+                                it["text"] = new_name
+                                if "property" in it and isinstance(it["property"], dict):
+                                    it["property"]["text"] = new_name
+                cur.execute("UPDATE general SET value = ? WHERE name = 'layout';", (json.dumps(l),))
             except Exception:
                 pass
         conn.commit()

@@ -218,17 +218,24 @@ def ensure_default_storage_servers():
         purge_simulated_devices_from_storage(db_path)
         purge_simulated_devices_from_storage(appdata_db)
 
+        storage_name = f"Plant {plant_id} Storage Master"
+        if not os.path.exists(db_path):
+            generate_fuxa_database(
+                target_dir=storage_work_dir,
+                plant_id=int(plant_id),
+                division_name=f"Central Storage Master (Plant {plant_id})",
+                line_name="PLC Collector & InfluxDB Storage",
+                project_name=storage_name,
+                opcua_endpoint=get_plant_opcua_endpoint(int(plant_id)),
+                base_dir=BASE_DIR
+            )
+        # Ensure particular project name is synced into DB
+        update_project_name_in_db(db_path, storage_name)
+        if os.path.exists(appdata_db):
+            update_project_name_in_db(appdata_db, storage_name)
+
         if not port_engine.is_port_in_use(storage_port):
-            logger.info(f"Hosting Central Storage Server for Plant {plant_id} on Port {storage_port}...")
-            if not os.path.exists(db_path):
-                generate_fuxa_database(
-                    target_dir=storage_work_dir,
-                    plant_id=int(plant_id),
-                    division_name=f"Central Storage Master (Plant {plant_id})",
-                    line_name="PLC Collector & InfluxDB Storage",
-                    opcua_endpoint=get_plant_opcua_endpoint(int(plant_id)),
-                    base_dir=BASE_DIR
-                )
+            logger.info(f"Hosting Central Storage Server for Plant {plant_id} ({storage_name}) on Port {storage_port}...")
             _launch_fuxa_instance(f"storage_p{plant_id}", storage_port, storage_work_dir, f"/p{plant_id}/storage")
 
 @app.on_event("startup")
@@ -263,6 +270,18 @@ async def on_startup():
             port_engine.register_instance(inst_id, inst)
         except Exception as e:
             logger.warning(f"Could not auto-sync tags for {inst_id}: {e}")
+
+        # Ensure project name in DB strictly matches the particular instance name
+        inst_name = inst.get("name")
+        if inst_name:
+            try:
+                db_p = os.path.join(work_dir, "project.fuxap.db")
+                app_p = os.path.join(work_dir, "_appdata", "project.fuxap.db")
+                update_project_name_in_db(db_p, inst_name)
+                if os.path.exists(app_p):
+                    update_project_name_in_db(app_p, inst_name)
+            except Exception as e:
+                logger.warning(f"Could not update project name for {inst_id}: {e}")
 
         if not port_engine.is_port_in_use(port):
             logger.info(f"Auto-restoring View Server {inst_id} on Port {port} ({subpath})...")
