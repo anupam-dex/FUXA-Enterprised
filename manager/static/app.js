@@ -38,6 +38,21 @@ function updateDropdownOptions(plants, divisions) {
                 el.value = curVal;
             }
         });
+
+        const topoPlant = document.getElementById('topo-storage-plant');
+        if (topoPlant) {
+            const curP = topoPlant.value;
+            let tHtml = '';
+            for (const [pId, pInfo] of Object.entries(plants)) {
+                const pName = (pInfo && pInfo.name) ? pInfo.name : `Plant ${pId}`;
+                const pPort = pInfo.storage_port || (pId === '9' ? 5900 : 5000 + parseInt(pId, 10) * 100);
+                tHtml += `<option value="${pId}">${pName} (Port ${pPort})</option>`;
+            }
+            if (tHtml) topoPlant.innerHTML = tHtml;
+            if (curP && topoPlant.querySelector(`option[value="${curP}"]`)) {
+                topoPlant.value = curP;
+            }
+        }
     }
 
     if (divisions) {
@@ -54,6 +69,21 @@ function updateDropdownOptions(plants, divisions) {
                 el.value = curVal;
             }
         });
+
+        const topoPreset = document.getElementById('topo-bulk-preset');
+        if (topoPreset) {
+            let pVal = topoPreset.value;
+            let topoHtml = `<option value="">-- Choose Sub-Location Preset --</option>
+<option value="__none__" data-div="0">🚫 None (Direct Flat Root / Unassigned)</option>`;
+            for (const [dId, dName] of Object.entries(divisions)) {
+                topoHtml += `<option value="${dName} (Div ${dId})" data-div="${dId}">🏭 ${dName} (Div ${dId})</option>`;
+            }
+            topoHtml += `<option value="__custom__">✏️ Custom Sub-Location...</option>`;
+            topoPreset.innerHTML = topoHtml;
+            if (pVal && topoPreset.querySelector(`option[value="${pVal}"]`)) {
+                topoPreset.value = pVal;
+            }
+        }
     }
 }
 
