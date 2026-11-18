@@ -258,7 +258,8 @@ def import_devices(
     restart_storage: bool = False,
     enable_history: bool = True,
     daq_mode: str = "change",
-    daq_interval: int = 60
+    daq_interval: int = 60,
+    clean_existing: bool = False
 ) -> dict:
     """
     Main execution engine:
@@ -273,19 +274,21 @@ def import_devices(
     print(f"[*] Storage Port:          Port {storage_port}")
     print(f"[*] Target Database:      {db_path}")
     print(f"[*] Dry-run Mode:          {'ON (Preview Only)' if dry_run else 'OFF (Live Commit)'}")
+    print(f"[*] Clean Mode:            {'ON (Replacing existing devices)' if clean_existing else 'OFF (Merging)'}")
     print(f"[*] Source Files:          {len(source_files)} file(s) provided")
     print("-" * 76)
 
     # 1. Load existing devices in the target Storage Server
-    canonical_devices = load_existing_storage_devices(db_path)
-    print(f"[*] Existing devices in Storage Server: {len(canonical_devices)}")
+    if clean_existing:
+        canonical_devices = {}
+        print(f"[*] Clean mode active: Starting with clean device catalog")
+    else:
+        canonical_devices = load_existing_storage_devices(db_path)
+        print(f"[*] Existing devices in Storage Server: {len(canonical_devices)}")
 
-    # Index existing devices by signature, normalized name, and ID
-    sig_to_id = {}
+    # Index existing devices by normalized name and ID
     name_to_id = {}
     for d_id, dev in canonical_devices.items():
-        sig = compute_device_signature(dev)
-        sig_to_id[sig] = d_id
         name_norm = normalize_string(dev.get("name") or "")
         if name_norm:
             name_to_id[name_norm] = d_id
@@ -325,19 +328,20 @@ def import_devices(
             sig = compute_device_signature(dev)
             name_norm = normalize_string(dev_name)
 
-            # Check for match in canonical devices
+            # Check for match in canonical devices (Deduplicate strictly by Name or ID)
             matched_id = None
             match_reason = None
 
-            if sig in sig_to_id:
-                matched_id = sig_to_id[sig]
-                match_reason = f"Hardware Signature match ({sig})"
-            elif name_norm and name_norm in name_to_id:
+            if name_norm and name_norm in name_to_id:
                 matched_id = name_to_id[name_norm]
                 match_reason = f"Normalized Name match ('{dev_name}')"
             elif dev.get("id") and dev["id"] in canonical_devices:
-                matched_id = dev["id"]
-                match_reason = f"Direct Device ID match ('{dev['id']}')"
+                existing_dev = canonical_devices[dev["id"]]
+                existing_name_norm = normalize_string(existing_dev.get("name") or "")
+                # Only treat as duplicate if names match or one of them is empty
+                if not name_norm or not existing_name_norm or name_norm == existing_name_norm:
+                    matched_id = dev["id"]
+                    match_reason = f"Direct Device ID match ('{dev['id']}')"
 
             if matched_id:
                 # Duplicate Device: Merge tags into the existing canonical device
@@ -364,13 +368,22 @@ def import_devices(
             else:
                 # Brand New Device
                 new_dev = dict(dev)
-                new_dev_id = dev.get("id") or f"dev_{normalize_string(dev_name)}_{int(time.time()*1000)%100000}"
+                cand_id = dev.get("id") or f"dev_{name_norm or 'dev'}_{int(time.time()*1000)%100000}"
+                # If candidate ID is already taken by a different device, generate unique suffix
+                if cand_id in canonical_devices:
+                    counter = 1
+                    new_dev_id = f"{cand_id}_{counter}"
+                    while new_dev_id in canonical_devices:
+                        counter += 1
+                        new_dev_id = f"{cand_id}_{counter}"
+                else:
+                    new_dev_id = cand_id
+
                 new_dev["id"] = new_dev_id
                 if "tags" not in new_dev or not isinstance(new_dev["tags"], dict):
                     new_dev["tags"] = {}
 
                 canonical_devices[new_dev_id] = new_dev
-                sig_to_id[sig] = new_dev_id
                 if name_norm:
                     name_to_id[name_norm] = new_dev_id
 
@@ -387,7 +400,7 @@ def import_devices(
                     "target_device": dev_name,
                     "tags_added": tags_count,
                     "tags_duplicate": 0,
-                    "reason": "Unique hardware connection"
+                    "reason": "Unique machine/station device"
                 })
 
     # 3. Output Audit Summary
@@ -420,6 +433,12 @@ def import_devices(
     cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
     cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
     cur.execute("CREATE TABLE IF NOT EXISTS devicesSecurity (name TEXT PRIMARY KEY, value TEXT);")
+
+    # If clean mode active, purge previous non-server devices from database
+    if clean_existing:
+        print("[*] Clean mode: Purging previous non-server devices from database...")
+        cur.execute("DELETE FROM devices WHERE name != 'server' AND name != '0';")
+        cur.execute("DELETE FROM devicesSecurity WHERE name != 'server' AND name != '0';")
 
     # Ensure internal FUXA Server device is preserved
     fuxa_server_dev = {"id": "0", "name": "FUXA Server", "type": "FuxaServer", "property": {}}
@@ -497,6 +516,13 @@ if __name__ == "__main__":
         help="Automatically trigger restart of the Storage Server after commit"
     )
     parser.add_argument(
+        "--clean", "--replace",
+        dest="clean_existing",
+        action="store_true",
+        default=False,
+        help="Clean replace: Wipe existing devices from target Storage Server and write only devices from source files"
+    )
+    parser.add_argument(
         "--no-history",
         dest="enable_history",
         action="store_false",
@@ -547,7 +573,8 @@ if __name__ == "__main__":
             restart_storage=args.restart,
             enable_history=args.enable_history,
             daq_mode=args.daq_mode,
-            daq_interval=args.daq_interval
+            daq_interval=args.daq_interval,
+            clean_existing=args.clean_existing
         )
     except Exception as ex:
         print(f"\n[-] Import failed: {ex}")

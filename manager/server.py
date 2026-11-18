@@ -847,6 +847,7 @@ async def api_import_storage_devices(plant_id: int, request: Request):
         form = await request.form()
         dry_run = str(form.get("dry_run", "false")).lower() in ("true", "1", "yes")
         restart = str(form.get("restart", "true")).lower() in ("true", "1", "yes")
+        clean_devices = str(form.get("clean_devices", "false")).lower() in ("true", "1", "yes")
         enable_history = str(form.get("enable_history", "true")).lower() in ("true", "1", "yes")
         daq_mode = str(form.get("daq_mode", "change"))
         daq_interval = int(form.get("daq_interval", 60))
@@ -867,6 +868,7 @@ async def api_import_storage_devices(plant_id: int, request: Request):
             body = {}
         dry_run = body.get("dry_run", False)
         restart = body.get("restart", True)
+        clean_devices = body.get("clean_devices", False)
         enable_history = body.get("enable_history", True)
         daq_mode = body.get("daq_mode", "change")
         daq_interval = int(body.get("daq_interval", 60))
@@ -887,7 +889,8 @@ async def api_import_storage_devices(plant_id: int, request: Request):
             restart_storage=restart and not dry_run,
             enable_history=enable_history,
             daq_mode=daq_mode,
-            daq_interval=daq_interval
+            daq_interval=daq_interval,
+            clean_existing=clean_devices
         )
         return {"success": True, "report": report}
     except Exception as e:

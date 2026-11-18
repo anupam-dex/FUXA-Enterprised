@@ -184,15 +184,15 @@ def sync_matching_storage_devices_to_view(
         matched_s_dev = None
         match_reason = None
 
-        if sig in storage_by_sig:
-            matched_s_dev = storage_by_sig[sig]
-            match_reason = f"Hardware Signature match ({sig})"
-        elif name_norm and name_norm in storage_by_name:
+        if name_norm and name_norm in storage_by_name:
             matched_s_dev = storage_by_name[name_norm]
             match_reason = f"Normalized Name match ('{dev_name}')"
         elif d_obj.get("id") and d_obj["id"] in storage_by_id:
             matched_s_dev = storage_by_id[d_obj["id"]]
             match_reason = f"Device ID match ('{d_obj['id']}')"
+        elif sig in storage_by_sig and len([s for s in storage_catalog if compute_device_signature(s) == sig]) == 1:
+            matched_s_dev = storage_by_sig[sig]
+            match_reason = f"Hardware Signature match ({sig})"
 
         if matched_s_dev:
             # Prepare View Server bridged device entry

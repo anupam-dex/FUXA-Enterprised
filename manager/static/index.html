@@ -427,7 +427,7 @@
                         </select>
                     </div>
                     <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 6px; padding: 10px 12px; font-size: 0.76rem; color: #a7f3d0; line-height: 1.45;">
-                        🛡️ <strong>Mandatory Hardware Deduplication Active:</strong> Scans all uploaded files, matches hardware connection signatures (IP + Port + SlaveId/Rack/Slot), unifies duplicate devices across projects, and merges new tags without creating duplicate device entries. Views and pages are completely excluded.
+                        🛡️ <strong>Preserve All Unique Devices:</strong> Scans all project devices, preserves all distinct machines and stations (even if sharing the same PLC IP or industrial gateway), and merges tags only when device names match. Views and pages are excluded from Central Storage.
                     </div>
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #f8fafc; margin-top: 10px; cursor: pointer;">
                         <input type="checkbox" id="migrate-enable-history" checked style="accent-color: #3b82f6; width: 16px; height: 16px;">
@@ -490,6 +490,10 @@
                     <label id="opt-row-keep" style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #e2e8f0; cursor: pointer; margin-bottom: 6px;">
                         <input type="checkbox" id="migrate-opt-keep" checked>
                         <span><strong>Keep existing views:</strong> Append imported views without deleting existing pages in target</span>
+                    </label>
+                    <label id="opt-row-clean" style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #fca5a5; cursor: pointer; margin-bottom: 6px;">
+                        <input type="checkbox" id="migrate-opt-clean">
+                        <span><strong>Clean replace:</strong> Replace existing storage devices with fresh devices from uploaded file (clears previous merged devices)</span>
                     </label>
                     <label style="display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: #e2e8f0; cursor: pointer; margin-bottom: 6px;">
                         <input type="checkbox" id="migrate-opt-dryrun">
@@ -656,6 +660,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=9"></script>
+    <script src="/static/app.js?v=10"></script>
 </body>
 </html>

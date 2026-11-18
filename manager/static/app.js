@@ -722,6 +722,7 @@ function setMigrateDestination(dest) {
     const boxStorage = document.getElementById('dest-box-storage');
     const boxView = document.getElementById('dest-box-view');
     const optKeep = document.getElementById('opt-row-keep');
+    const optClean = document.getElementById('opt-row-clean');
     const optRestart = document.getElementById('opt-row-restart');
     const btn = document.getElementById('btn-execute-migrate');
     const dropSubtext = document.getElementById('dropzone-subtext');
@@ -732,6 +733,7 @@ function setMigrateDestination(dest) {
         if (boxStorage) boxStorage.style.display = 'block';
         if (boxView) boxView.style.display = 'none';
         if (optKeep) optKeep.style.display = 'none';
+        if (optClean) optClean.style.display = 'flex';
         if (optRestart) optRestart.style.display = 'flex';
         if (btn) btn.innerHTML = '🚀 Import & Deduplicate Devices to Storage';
         if (dropSubtext) dropSubtext.textContent = 'Select one or multiple project files. Duplicate devices will be automatically merged.';
@@ -741,6 +743,7 @@ function setMigrateDestination(dest) {
         if (boxStorage) boxStorage.style.display = 'none';
         if (boxView) boxView.style.display = 'block';
         if (optKeep) optKeep.style.display = 'flex';
+        if (optClean) optClean.style.display = 'none';
         if (optRestart) optRestart.style.display = 'none';
         if (btn) btn.innerHTML = '🚀 Start 1-Click Dashboard Migration';
         if (dropSubtext) dropSubtext.textContent = 'Supported formats: FUXA project export (.json), FUXA package (.fuxap)';
@@ -907,6 +910,8 @@ async function executeProjectMigration() {
             const formData = new FormData();
             formData.append('dry_run', dryRun ? 'true' : 'false');
             formData.append('restart', restart ? 'true' : 'false');
+            const cleanDev = document.getElementById('migrate-opt-clean')?.checked ?? false;
+            formData.append('clean_devices', cleanDev ? 'true' : 'false');
             const autoHist = document.getElementById('migrate-enable-history')?.checked ?? true;
             formData.append('enable_history', autoHist ? 'true' : 'false');
             formData.append('daq_mode', 'change');
