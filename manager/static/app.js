@@ -139,15 +139,21 @@ function renderTopology(matrix) {
                 </div>
                 <span class="views-count-pill ${pCount > 0 ? 'has-active' : ''}">${pCount} Active</span>
             </div>
-            <div class="plant-strip-bottom" style="display: flex; gap: 6px; align-items: center;">
+            <div class="plant-strip-bottom">
                 ${storageChipHtml}
-                <button onclick="event.stopPropagation(); openStorageImportModal('${pId}')" title="Import & Deduplicate Devices into Plant ${pId} Storage Server" style="background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.4); color: #fbbf24; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">
-                    📥 Import Devices
-                </button>
-                <button onclick="event.stopPropagation(); openBulkHistoryModal('${pId}')" title="Configure Bulk Historical DAQ for Plant ${pId}" style="background: rgba(59, 130, 246, 0.12); border: 1px solid rgba(59, 130, 246, 0.4); color: #60a5fa; border-radius: 4px; padding: 3px 8px; font-size: 0.72rem; font-weight: 700; cursor: pointer;">
-                    📈 Bulk DAQ
-                </button>
-                <span style="font-size: 0.72rem; color: var(--text-muted); font-family: var(--font-mono); margin-left: auto;">InfluxDB Master</span>
+                <div class="dropdown-wrapper" onclick="event.stopPropagation();">
+                    <button class="btn btn-sm btn-secondary dropdown-trigger" onclick="toggleDropdown(this, event)" style="font-size: 0.72rem; padding: 3px 8px; font-weight: 600;">
+                        <span>Manage ▾</span>
+                    </button>
+                    <div class="dropdown-menu">
+                        <button class="dropdown-item" onclick="openStorageImportModal('${pId}')">
+                            <span style="font-size: 0.9rem;">📥</span> Import & Deduplicate Devices
+                        </button>
+                        <button class="dropdown-item" onclick="openBulkHistoryModal('${pId}')">
+                            <span style="font-size: 0.9rem;">📈</span> Bulk Historical DAQ
+                        </button>
+                    </div>
+                </div>
             </div>
         `;
         plantStrip.appendChild(card);
@@ -158,6 +164,10 @@ function renderTopology(matrix) {
     // Update global telemetry counters
     document.getElementById('stat-views-total').textContent = totalInstances;
     document.getElementById('pipe-active-count').textContent = `${totalInstances} Deployed Lines`;
+    const kpiViews = document.getElementById('kpi-views-count');
+    if (kpiViews) kpiViews.textContent = `${totalInstances} Deployed Lines`;
+    const kpiStorage = document.getElementById('kpi-storage-count');
+    if (kpiStorage) kpiStorage.textContent = `${matrix.length} InfluxDB Masters`;
 
     const faultPill = document.getElementById('pill-fleet-faults');
     const faultCountEl = document.getElementById('stat-faults-count');
@@ -252,54 +262,110 @@ function renderInstancesList() {
             <div class="col-server">
                 <div class="title-row">
                     <span class="${dotClass}" style="${dotStyle}" title="Instance Status"></span>
-                    <span class="name">${inst.name}</span>
+                    <a href="${otView}" target="_blank" class="name-link" title="Open View Server (Port 80)">${inst.name}</a>
                 </div>
                 <div class="plant-tag">${inst.plant_name || `Plant ${inst.plant}`} &bull; Div ${inst.division || 6} (Line ${inst.line || 1})</div>
             </div>
 
-            <!-- Col 2: Ports & Subpath -->
-            <div class="col-routing">
-                <div class="port-badge" title="Internal backend process port" style="${!isLive ? 'border-color: #ef4444; color: #fca5a5;' : ''}">Port: ${inst.port}</div>
-                <div class="subpath-badge">${inst.subpath}</div>
-                <button onclick="copyInstanceApiKey('${inst.id}')" class="subpath-badge" style="background: rgba(147, 51, 234, 0.15); border: 1px solid rgba(147, 51, 234, 0.4); color: #c084fc; cursor: pointer; display: flex; align-items: center; gap: 4px; margin-top: 4px;" title="Click to view & copy API Key / Secret">
-                    <span>🔑</span> API Key
-                </button>
-            </div>
-
-            <!-- Col 3: Data Source -->
-            <div class="col-data-source">
-                <div class="source-label">Source Bridge</div>
-                <div class="source-val">Storage :${inst.storage_port || 5900}</div>
-                <div class="tag-badge" title="Active Storage Tags Ingested">🏷️ ${inst.tag_count || 11} Tags</div>
-            </div>
-
-            <!-- Col 4: OT Port 80 Clean Reverse Proxy Link -->
-            <div class="col-ot-link">
-                <a href="${otView}" target="_blank" class="ot-link-pill" title="Open Clean OT View (Port 80 - No Port Number)">
+            <!-- Col 2: Routing & Status Badges -->
+            <div class="col-routing-clean">
+                <a href="${otView}" target="_blank" class="ot-link-pill" title="Click to open Clean Port 80 URL">
                     <span>🌐</span> ${inst.subpath}/view
                 </a>
+                <div class="meta-row">
+                    <span class="meta-badge port-badge">Port ${inst.port}</span>
+                    <span class="meta-badge storage-badge">Storage :${inst.storage_port || 5900}</span>
+                    <span class="meta-badge tag-badge">🏷️ ${inst.tag_count || 11} Tags</span>
+                </div>
             </div>
 
-            <!-- Col 5: Actions -->
+            <!-- Col 3: Streamlined Actions (2 Primary Buttons + 1 Dropdown Menu) -->
             <div class="col-actions">
                 ${isLive ? `
-                    <a href="${otEditor}" target="_blank" class="btn btn-primary btn-sm" title="Open Editor (Port 80 - No Port Number)">Editor</a>
-                    <a href="${otView}" target="_blank" class="btn btn-secondary btn-sm" title="Open Operator View (Port 80 - No Port Number)">View</a>
+                    <a href="${otView}" target="_blank" class="btn btn-view-launch btn-sm" title="Launch Operator HMI View">
+                        <span>▶</span> Launch
+                    </a>
+                    <a href="${otEditor}" target="_blank" class="btn btn-secondary btn-sm" title="Open SCADA Editor">
+                        <span>✏️</span> Editor
+                    </a>
                 ` : `
                     <button onclick="triggerInstanceSelfHeal('${inst.id}')" class="btn btn-primary btn-sm" style="background: #10b981; border-color: #059669;" title="Auto-Heal & Launch Server">▶ Heal & Start</button>
                     <button onclick="openDiagnosticsModal('${inst.id}')" class="btn btn-secondary btn-sm" style="color: #38bdf8;" title="View Exact Fault Diagnostics">🩺 Diag</button>
                 `}
-                <button onclick="openMigrateModal('${inst.id}', 'view')" class="btn btn-secondary btn-sm" title="Import Dashboards (.json/.fuxap) into this View Server" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">📥 Import</button>
-                <button onclick="openVsDevicesModal('${inst.id}')" class="btn btn-secondary btn-sm" title="Manage Connected Devices for this View Server" style="color: #60a5fa; border-color: rgba(59, 130, 246, 0.4);">🔌 Devices</button>
-                <button onclick="syncTags('${inst.id}')" class="btn btn-secondary btn-sm" title="Sync Plant Storage Tags into this View Server">🔄 Sync Tags</button>
-                <button onclick="editInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Edit View Server">✏️ Edit</button>
-                <button onclick="viewLogs('${inst.id}')" class="btn btn-secondary btn-sm" title="View Logs">Logs</button>
-                <button onclick="deleteInstance('${inst.id}')" class="btn btn-danger btn-sm" title="Delete Instance">&#128465;</button>
+
+                <div class="dropdown-wrapper">
+                    <button class="btn btn-secondary btn-sm dropdown-trigger" onclick="toggleDropdown(this, event)" title="More Server Actions">
+                        <span>•••</span>
+                    </button>
+                    <div class="dropdown-menu">
+                        <button class="dropdown-item" onclick="openMigrateModal('${inst.id}', 'view')">
+                            <span style="font-size: 0.95rem;">📥</span> Import Project / Views
+                        </button>
+                        <button class="dropdown-item" onclick="openVsDevicesModal('${inst.id}')">
+                            <span style="font-size: 0.95rem;">🔌</span> Manage Connected Devices
+                        </button>
+                        <button class="dropdown-item" onclick="syncTags('${inst.id}')">
+                            <span style="font-size: 0.95rem;">🔄</span> Sync Storage Tags
+                        </button>
+                        <button class="dropdown-item" onclick="copyInstanceApiKey('${inst.id}')">
+                            <span style="font-size: 0.95rem;">🔑</span> View & Copy API Key
+                        </button>
+                        <button class="dropdown-item" onclick="viewLogs('${inst.id}')">
+                            <span style="font-size: 0.95rem;">📜</span> View Live Logs
+                        </button>
+                        <button class="dropdown-item" onclick="editInstance('${inst.id}')">
+                            <span style="font-size: 0.95rem;">⚙️</span> Edit Configuration & URL
+                        </button>
+                        <div class="dropdown-divider"></div>
+                        <button class="dropdown-item danger" onclick="deleteInstance('${inst.id}')">
+                            <span style="font-size: 0.95rem;">🗑️</span> Delete Instance
+                        </button>
+                    </div>
+                </div>
             </div>
             ${faultBarHtml}
         `;
         list.appendChild(row);
     });
+}
+
+function toggleDropdown(btn, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    const wrapper = btn.closest('.dropdown-wrapper');
+    const menu = wrapper ? wrapper.querySelector('.dropdown-menu') : null;
+    if (!menu) return;
+
+    document.querySelectorAll('.dropdown-menu.show').forEach(m => {
+        if (m !== menu) m.classList.remove('show');
+    });
+
+    menu.classList.toggle('show');
+}
+
+// Global click outside to close dropdowns
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.dropdown-wrapper')) {
+        document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'));
+    }
+});
+
+// ESC key to close dropdowns
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'));
+    }
+});
+
+function toggleArchDetails() {
+    const banner = document.getElementById('topology-banner');
+    const arrow = document.getElementById('arch-toggle-arrow');
+    if (!banner) return;
+    const isHidden = banner.style.display === 'none' || !banner.style.display;
+    banner.style.display = isHidden ? 'grid' : 'none';
+    if (arrow) arrow.textContent = isHidden ? '▴' : '▾';
 }
 
 function openCreateModal() {

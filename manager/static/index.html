@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FUXA Fleet Manager | SCADA Orchestrator</title>
-    <link rel="stylesheet" href="/static/styles.css?v=2">
+    <link rel="stylesheet" href="/static/styles.css?v=5">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -21,10 +21,6 @@
         <div class="header-stats">
             <div class="stat-pill">
                 <span class="dot live"></span>
-                <span>OPC-UA Bridge: <strong>opc.tcp://0.0.0.0:4845</strong></span>
-            </div>
-            <div class="stat-pill">
-                <span class="dot live"></span>
                 <span>OT Gateway: <strong>Port 80</strong></span>
             </div>
             <div class="stat-pill" id="pill-watchdog" title="Automated Process Watchdog & Self-Healing Engine (Click to view live logs)" onclick="openWatchdogModal()" style="cursor: pointer;">
@@ -38,17 +34,68 @@
             <div class="stat-pill">
                 <span>View Servers: <strong id="stat-views-total">0</strong></span>
             </div>
-            <button class="btn btn-secondary" onclick="openBackupModal()" title="1-Click Disaster Recovery & Fleet Snapshots" style="border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.1);">📦 Backup & Snapshots</button>
-            <button class="btn btn-secondary" onclick="openMigrateModal()" title="1-Click Import / Migrate project.json or .fuxap dashboards" style="border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.12); font-weight: 600;">📥 Import Project (.json / .fuxap)</button>
-            <button class="btn btn-secondary" onclick="openDeviceTopologyModal()" title="Group devices into Plant Sub-Locations & Lines" style="border-color: #3b82f6; color: #60a5fa; background: rgba(59, 130, 246, 0.12); font-weight: 600;">📍 Group Devices</button>
-            <button class="btn btn-secondary" onclick="syncAllTags()" title="Sync storage server tags to all View servers">🔄 Sync All Tags</button>
+
+            <button class="btn btn-secondary" onclick="openMigrateModal()" title="1-Click Import / Migrate project.json or .fuxap dashboards" style="border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.12); font-weight: 600;">📥 Import Project</button>
+
+            <!-- Tools Dropdown Menu -->
+            <div class="dropdown-wrapper">
+                <button class="btn btn-secondary dropdown-trigger" onclick="toggleDropdown(this, event)" style="font-weight: 600;">
+                    <span>⚙️ Tools</span> <span style="font-size: 0.72rem; margin-left: 2px;">▾</span>
+                </button>
+                <div class="dropdown-menu">
+                    <button class="dropdown-item" onclick="openDeviceTopologyModal()">
+                        <span style="font-size: 1rem;">📍</span> Group Devices & Sub-Locations
+                    </button>
+                    <button class="dropdown-item" onclick="syncAllTags()">
+                        <span style="font-size: 1rem;">🔄</span> Sync All Storage Tags
+                    </button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item" onclick="openBackupModal()">
+                        <span style="font-size: 1rem;">📦</span> Disaster Recovery & Snapshots
+                    </button>
+                </div>
+            </div>
+
             <button class="btn btn-primary" onclick="openCreateModal()">+ Create New Project</button>
         </div>
     </header>
 
     <main class="container">
-        <!-- 1. Live Architecture Data Flow Pipeline -->
-        <section class="topology-banner">
+        <!-- 1. Sleek High-Density KPI Strip with Collapsible Architecture Details -->
+        <section class="kpi-summary-strip">
+            <div class="kpi-group">
+                <div class="kpi-item">
+                    <span class="dot" style="background: var(--accent-storage); box-shadow: 0 0 6px var(--accent-storage);"></span>
+                    <span class="kpi-label">Plant Storage:</span>
+                    <strong class="kpi-val" id="kpi-storage-count">5 InfluxDB Masters</strong>
+                </div>
+                <div class="kpi-divider"></div>
+                <div class="kpi-item">
+                    <span class="dot" style="background: var(--accent-purple); box-shadow: 0 0 6px var(--accent-purple);"></span>
+                    <span class="kpi-label">Central OPC-UA:</span>
+                    <strong class="kpi-val">:4845 / 4849 Hubs</strong>
+                </div>
+                <div class="kpi-divider"></div>
+                <div class="kpi-item">
+                    <span class="dot live"></span>
+                    <span class="kpi-label">HMI View Servers:</span>
+                    <strong class="kpi-val" id="kpi-views-count">4 Deployed Lines</strong>
+                </div>
+                <div class="kpi-divider"></div>
+                <div class="kpi-item">
+                    <span class="dot" style="background: var(--accent-cyan); box-shadow: 0 0 6px var(--accent-cyan);"></span>
+                    <span class="kpi-label">Reverse Proxy:</span>
+                    <strong class="kpi-val">Port 80 Clean Routes</strong>
+                </div>
+            </div>
+
+            <button class="btn-arch-toggle" onclick="toggleArchDetails()" id="btn-arch-toggle" title="Toggle full architecture pipeline explanation">
+                <span>Architecture Flow</span> <span id="arch-toggle-arrow">▾</span>
+            </button>
+        </section>
+
+        <!-- Detailed Architecture Pipeline (Collapsible, hidden by default to keep screen spacious) -->
+        <section class="topology-banner" id="topology-banner" style="display: none;">
             <div class="pipe-step">
                 <div class="pipe-step-header">
                     <span class="pipe-tag storage">1. Plant Storage</span>
@@ -810,6 +857,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=14"></script>
+    <script src="/static/app.js?v=15"></script>
 </body>
 </html>
