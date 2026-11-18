@@ -244,6 +244,30 @@ def get_storage_devices_for_plant(plant_id: int, base_dir: str = None, opcua_end
     catalog = get_storage_devices_catalog(plant_id, base_dir=base_dir, opcua_endpoint=opcua_endpoint)
     return {dev["id"]: dev for dev in catalog}
 
+def strip_historical_daq_for_view(dev_obj: dict) -> dict:
+    """
+    Strictly removes and disables all historical DAQ / logging properties from
+    devices and tags for View Servers.
+    View Servers are purely visualization HMIs; historical data acquisition
+    is strictly and exclusively owned by Central Storage.
+    """
+    if not isinstance(dev_obj, dict):
+        return dev_obj
+    dev = json.loads(json.dumps(dev_obj))
+    dev["influxdb_logging"] = False
+
+    tags = dev.get("tags") or {}
+    for t_id, t_info in tags.items():
+        if isinstance(t_info, dict):
+            t_info["daq"] = {
+                "enabled": False,
+                "changed": False,
+                "interval": 0,
+                "restored": False
+            }
+    dev["tags"] = tags
+    return dev
+
 def generate_fuxa_database(
     target_dir: str,
     plant_id: int,
@@ -353,12 +377,13 @@ def generate_fuxa_database(
     }
     cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("layout", json.dumps(layout_data)))
 
-    # 2. Extract and pre-populate distinct Storage Server devices for this Plant
+    # 2. Extract and pre-populate distinct Storage Server devices for this Plant (strictly NO historical DAQ on View Servers)
     storage_devices = get_storage_devices_for_plant(plant_id, base_dir=base_dir, opcua_endpoint=opcua_endpoint)
     for dev_id, dev_obj in storage_devices.items():
+        clean_dev = strip_historical_daq_for_view(dev_obj)
         cur.execute(
             "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-            (dev_id, json.dumps(dev_obj), "opc-ua", "", "")
+            (dev_id, json.dumps(clean_dev), "opc-ua", "", "")
         )
 
     # 3. Create Default HMI View with Clean Background (TVS Logo is placed in the top header)
@@ -455,14 +480,15 @@ def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = N
 
     plant_endpoint = get_plant_opcua_endpoint(plant_id)
 
-    # Pre-populate / sync individual storage devices connected to InfluxDB
+    # Pre-populate / sync individual storage devices connected to InfluxDB (strictly NO historical DAQ on View Servers)
     for dev_id, dev_obj in storage_devices.items():
+        clean_dev = strip_historical_daq_for_view(dev_obj)
         cur.execute("SELECT value, connection, cntid, cntpwd FROM devices WHERE name = ?;", (dev_id,))
         row = cur.fetchone()
         if row:
             dev_data = json.loads(row[0])
             existing_tags = dev_data.get("tags", {})
-            for t_id, t_info in dev_obj["tags"].items():
+            for t_id, t_info in clean_dev["tags"].items():
                 existing_tags[t_id] = t_info
             dev_data["tags"] = existing_tags
             if "property" not in dev_data or not dev_data["property"]:
@@ -470,22 +496,27 @@ def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = N
             dev_data["property"]["address"] = plant_endpoint
             dev_data["enabled"] = True
             dev_data["polling"] = 1000
+            dev_data["influxdb_logging"] = False
             # Strip Sim_ prefix if present
             if dev_data.get("name", "").startswith("Sim_"):
                 dev_data["name"] = dev_data["name"].replace("Sim_", "", 1)
+            # Ensure all tags have historical DAQ strictly disabled
+            for t in dev_data["tags"].values():
+                if isinstance(t, dict):
+                    t["daq"] = {"enabled": False, "changed": False, "interval": 0, "restored": False}
             cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(dev_data), dev_id))
             all_tags.update(existing_tags)
         else:
-            dev_obj["polling"] = 1000
-            if dev_obj.get("name", "").startswith("Sim_"):
-                dev_obj["name"] = dev_obj["name"].replace("Sim_", "", 1)
-            if "property" in dev_obj:
-                dev_obj["property"]["address"] = plant_endpoint
+            clean_dev["polling"] = 1000
+            if clean_dev.get("name", "").startswith("Sim_"):
+                clean_dev["name"] = clean_dev["name"].replace("Sim_", "", 1)
+            if "property" in clean_dev:
+                clean_dev["property"]["address"] = plant_endpoint
             cur.execute(
                 "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                (dev_id, json.dumps(dev_obj), "opc-ua", "", "")
+                (dev_id, json.dumps(clean_dev), "opc-ua", "", "")
             )
-            all_tags.update(dev_obj["tags"])
+            all_tags.update(clean_dev["tags"])
 
     # Clean up obsolete monolithic / placeholder device rows
     cur.execute("DELETE FROM devices WHERE name LIKE '%storage_opcua%' OR name LIKE '%dev_opcua_plant%';")

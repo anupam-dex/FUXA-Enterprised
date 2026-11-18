@@ -543,15 +543,18 @@ def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: s
             pass
     if not cur_settings.get("hideEditorOnboarding"):
         cur_settings["hideEditorOnboarding"] = True
-        if "language" not in cur_settings:
-            cur_settings["language"] = "en"
-        if "secureEnabled" not in cur_settings:
-            cur_settings["secureEnabled"] = False
-        try:
-            with open(settings_file, "w") as f:
-                json.dump(cur_settings, f, indent=2)
-        except Exception:
-            pass
+    if not instance_id.startswith("storage_"):
+        # Strictly disable DAQ engine on View Servers (historical logging belongs exclusively to Central Storage)
+        cur_settings["daqEnabled"] = False
+    if "language" not in cur_settings:
+        cur_settings["language"] = "en"
+    if "secureEnabled" not in cur_settings:
+        cur_settings["secureEnabled"] = False
+    try:
+        with open(settings_file, "w") as f:
+            json.dump(cur_settings, f, indent=2)
+    except Exception:
+        pass
 
     # Ensure common resources folder with TVS logo is provisioned in work_dir
     common_img_dir = os.path.join(work_dir, "_images", "Common")
@@ -1266,9 +1269,11 @@ def api_connect_storage_device(req: ConnectDeviceRequest):
                 import sqlite3
                 conn = sqlite3.connect(db_path)
                 cur = conn.cursor()
+                from project_builder import strip_historical_daq_for_view
+                clean_device = strip_historical_daq_for_view(matched_device)
                 cur.execute(
                     "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                    (matched_device["id"], json.dumps(matched_device), "opc-ua", "", "")
+                    (clean_device["id"], json.dumps(clean_device), "opc-ua", "", "")
                 )
                 conn.commit()
                 conn.close()

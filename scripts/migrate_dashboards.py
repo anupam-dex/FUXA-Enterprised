@@ -209,16 +209,29 @@ def sync_matching_storage_devices_to_view(
             match_reason = f"Hardware Signature match ({sig})"
 
         if matched_s_dev:
-            # Prepare View Server bridged device entry
-            bridged_dev = dict(matched_s_dev)
+            # Prepare View Server bridged device entry (strictly NO historical DAQ on View Servers)
+            bridged_dev = json.loads(json.dumps(matched_s_dev))
             bridged_dev["type"] = "OPCUA"
             bridged_dev["enabled"] = True
             bridged_dev["polling"] = 1000
+            bridged_dev["influxdb_logging"] = False
             if "property" not in bridged_dev or not bridged_dev["property"]:
                 bridged_dev["property"] = {}
             bridged_dev["property"]["address"] = plant_endpoint
 
-            tag_count = len(bridged_dev.get("tags") or {})
+            # Strictly strip and disable any DAQ / historical logging on tags
+            tags = bridged_dev.get("tags") or {}
+            for t_id, t_info in tags.items():
+                if isinstance(t_info, dict):
+                    t_info["daq"] = {
+                        "enabled": False,
+                        "changed": False,
+                        "interval": 0,
+                        "restored": False
+                    }
+            bridged_dev["tags"] = tags
+
+            tag_count = len(tags)
             devices_to_inject.append(bridged_dev)
             report["matched_from_storage"].append({
                 "source_name": dev_name,
@@ -226,7 +239,7 @@ def sync_matching_storage_devices_to_view(
                 "tags_count": tag_count,
                 "reason": match_reason
             })
-            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags) [{match_reason}]")
+            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags, DAQ disabled) [{match_reason}]")
         else:
             report["missing_in_storage"].append(dev_name)
             print(f"    ⚠️ Notice: Device '{dev_name}' ({dev_type}) is NOT yet configured in Plant {plant_id} Storage Server.")
@@ -554,6 +567,31 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
     layout["navigation"] = nav
 
     cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("layout", json.dumps(layout)))
+
+    # 7. Strictly enforce NO historical DAQ on any device or tag on this View Server
+    cur.execute("SELECT name, value FROM devices;")
+    for d_name, d_val in cur.fetchall():
+        if d_name in ("server", "0"):
+            continue
+        try:
+            d_obj = json.loads(d_val)
+            d_obj["influxdb_logging"] = False
+            tags = d_obj.get("tags") or {}
+            changed = False
+            for t_id, t_info in tags.items():
+                if isinstance(t_info, dict):
+                    t_info["daq"] = {
+                        "enabled": False,
+                        "changed": False,
+                        "interval": 0,
+                        "restored": False
+                    }
+                    changed = True
+            if changed:
+                cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(d_obj), d_name))
+        except Exception:
+            pass
+    print("[+] Verified and strictly disabled historical DAQ across all View Server tags.")
 
     try:
         cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
