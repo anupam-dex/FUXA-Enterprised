@@ -674,17 +674,22 @@
                 <button class="btn-close" onclick="closeDeviceTopologyModal()">&times;</button>
             </div>
             <div class="modal-body" style="padding: 16px 20px;">
-                <!-- Storage Server Selector -->
-                <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
-                    <label style="font-size: 0.85rem; font-weight: 600; color: #cbd5e1; min-width: 140px;">Target Storage Server:</label>
-                    <select id="topo-storage-plant" class="form-control" onchange="loadStorageTopologyDevices()" style="flex: 1; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 7px 10px; border-radius: 6px; font-size: 0.85rem;">
-                        <option value="9">Plant 9 Central Storage Master (Port 5900)</option>
-                        <option value="1">Plant 1 Storage Master (Port 5100)</option>
-                        <option value="2">Plant 2 Storage Master (Port 5200)</option>
-                        <option value="3">Plant 3 Storage Master (Port 5300)</option>
-                        <option value="4">Plant 4 Storage Master (Port 5400)</option>
-                    </select>
-                    <button class="btn btn-sm btn-secondary" onclick="loadStorageTopologyDevices()" style="font-size: 0.8rem;">🔄 Reload</button>
+                <!-- Storage Server Selector & Maintenance Tools -->
+                <div style="display: flex; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 10px; align-items: center; flex: 1; min-width: 320px;">
+                        <label style="font-size: 0.85rem; font-weight: 600; color: #cbd5e1; min-width: 140px;">Target Storage Server:</label>
+                        <select id="topo-storage-plant" class="form-control" onchange="loadStorageTopologyDevices()" style="flex: 1; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 7px 10px; border-radius: 6px; font-size: 0.85rem;">
+                            <option value="9">Plant 9 Central Storage Master (Port 5900)</option>
+                            <option value="1">Plant 1 Storage Master (Port 5100)</option>
+                            <option value="2">Plant 2 Storage Master (Port 5200)</option>
+                            <option value="3">Plant 3 Storage Master (Port 5300)</option>
+                            <option value="4">Plant 4 Storage Master (Port 5400)</option>
+                        </select>
+                        <button class="btn btn-sm btn-secondary" onclick="loadStorageTopologyDevices()" style="font-size: 0.8rem;">🔄 Reload</button>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="purgeSimulatedStorageDevices()" title="Permanently delete all simulated demo devices (Oven Line 1, Spray Booth Line 1, Pre Treatment Line 1, etc.)" style="background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; color: #fca5a5; font-size: 0.8rem; font-weight: 600;">
+                        🧹 Purge Simulated Devices
+                    </button>
                 </div>
 
                 <!-- Bulk Toolbar -->
@@ -695,6 +700,7 @@
                     <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
                         <select id="topo-bulk-preset" class="form-control" onchange="handleTopologyPresetChange()" style="flex: 1; min-width: 180px; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
                             <option value="">-- Choose Sub-Location Preset --</option>
+                            <option value="__none__" data-div="0">🚫 None (Direct Flat Root / Unassigned)</option>
                             <option value="Paintshop (Div 6)" data-div="6">🏭 Paintshop (Div 6)</option>
                             <option value="Engine Assembly (Div 3)" data-div="3">🔩 Engine Assembly (Div 3)</option>
                             <option value="Utilities & Energy (Div 5)" data-div="5">🔧 Utilities & Energy (Div 5)</option>
@@ -724,15 +730,16 @@
                                     <input type="checkbox" id="topo-select-all" onchange="toggleSelectAllTopoDevices(event)" style="cursor: pointer;">
                                 </th>
                                 <th style="padding: 8px 12px;">Device Name</th>
-                                <th style="padding: 8px 12px; width: 100px;">Protocol</th>
+                                <th style="padding: 8px 12px; width: 90px;">Protocol</th>
                                 <th style="padding: 8px 12px;">Endpoint / Address</th>
-                                <th style="padding: 8px 12px; width: 60px; text-align: center;">Tags</th>
-                                <th style="padding: 8px 12px; width: 220px;">Assigned Sub-Location</th>
-                                <th style="padding: 8px 12px; width: 120px;">Line / Station</th>
+                                <th style="padding: 8px 12px; width: 50px; text-align: center;">Tags</th>
+                                <th style="padding: 8px 12px; width: 200px;">Assigned Sub-Location</th>
+                                <th style="padding: 8px 12px; width: 110px;">Line / Station</th>
+                                <th style="padding: 8px 12px; width: 50px; text-align: center;">Action</th>
                             </tr>
                         </thead>
                         <tbody id="topo-devices-tbody">
-                            <tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">Loading storage devices...</td></tr>
+                            <tr><td colspan="8" style="padding: 24px; text-align: center; color: #94a3b8;">Loading storage devices...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -753,6 +760,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=12"></script>
+    <script src="/static/app.js?v=13"></script>
 </body>
 </html>

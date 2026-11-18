@@ -2459,19 +2459,19 @@
 
         // 1. Explicit user-configured Location on device
         const explicitLoc = (devObj && (devObj.location || (devObj.property && devObj.property.location))) || '';
-        if (explicitLoc && explicitLoc.trim()) {
+        if (explicitLoc && explicitLoc.trim() && explicitLoc.trim() !== '__none__') {
             const locName = explicitLoc.trim();
             let icon = '🏭';
             const lLow = locName.toLowerCase();
             if (lLow.includes('ems') || lLow.includes('energy') || lLow.includes('substation') || lLow.includes('power')) icon = '⚡';
-            else if (lLow.includes('paint') || lLow.includes('oven') || lLow.includes('booth') || lLow.includes('d6')) icon = '🏭';
-            else if (lLow.includes('body') || lLow.includes('d1')) icon = '🚗';
-            else if (lLow.includes('stamp') || lLow.includes('press') || lLow.includes('d2')) icon = '🔨';
-            else if (lLow.includes('assembly') || lLow.includes('d3')) icon = '🔩';
-            else if (lLow.includes('quality') || lLow.includes('inspection') || lLow.includes('d4')) icon = '🔬';
-            else if (lLow.includes('boiler') || lLow.includes('utility') || lLow.includes('chiller') || lLow.includes('d5')) icon = '🔧';
-            else if (lLow.includes('robot') || lLow.includes('d7')) icon = '🤖';
-            else if (lLow.includes('material') || lLow.includes('d8')) icon = '📦';
+            else if (lLow.includes('paint') || lLow.includes('oven') || lLow.includes('booth')) icon = '🏭';
+            else if (lLow.includes('body') || lLow.includes('decoater')) icon = '🚗';
+            else if (lLow.includes('stamp') || lLow.includes('press')) icon = '🔨';
+            else if (lLow.includes('assembly') || lLow.includes('engine')) icon = '🔩';
+            else if (lLow.includes('quality') || lLow.includes('inspection')) icon = '🔬';
+            else if (lLow.includes('boiler') || lLow.includes('utility') || lLow.includes('chiller') || lLow.includes('gas') || lLow.includes('water')) icon = '🔧';
+            else if (lLow.includes('robot') || lLow.includes('automation')) icon = '🤖';
+            else if (lLow.includes('material')) icon = '📦';
             else icon = '📍';
 
             return {
@@ -2482,71 +2482,31 @@
             };
         }
 
-        // 2. Explicit topology in devObj (from central storage or metadata)
-        if (devObj && devObj.topology && devObj.topology.division) {
-            const divId = String(devObj.topology.division);
-            const divNames = {
-                '1': 'Body Shop (Div 1)',
-                '2': 'Stamping (Div 2)',
-                '3': 'Assembly (Div 3)',
-                '4': 'Quality & Inspection (Div 4)',
-                '5': 'Utility & Boiler (Div 5)',
-                '6': 'Paintshop (Div 6)',
-                '7': 'Robotics & Automation (Div 7)',
-                '8': 'Material Handling (Div 8)'
-            };
-            const divIcons = {
-                '1': '🚗', '2': '🔨', '3': '🔩', '4': '🔬',
-                '5': '🔧', '6': '🏭', '7': '🤖', '8': '📦'
-            };
+        // If explicitly set to empty or none, keep under General / Unassigned
+        if (devObj && (devObj.location === '' || devObj.location === '__none__')) {
             return {
-                id: 'div_' + divId,
-                name: divNames[divId] || `Division ${divId}`,
-                icon: divIcons[divId] || '🏭',
-                fullName: `${divIcons[divId] || '🏭'} ${divNames[divId] || `Division ${divId}`}`
+                id: 'subloc_general',
+                name: 'General Devices',
+                icon: '⚡',
+                fullName: '⚡ General Devices'
             };
         }
 
-        // 2. Explicit location / UNS path
-        const rawLoc = (devObj && (devObj.location || devObj.unsPath)) || '';
-        if (rawLoc) {
-            const cleaned = rawLoc.replace(/^Plant_\d+[\/_]/i, '').replace(/[\/_].*/, '').trim();
-            if (cleaned) {
+        // 2. Explicit topology with name in devObj
+        if (devObj && devObj.topology && devObj.topology.division_name) {
+            const locName = String(devObj.topology.division_name).trim();
+            if (locName) {
                 return {
-                    id: 'loc_' + cleaned.toLowerCase().replace(/\s+/g, '_'),
-                    name: cleaned,
+                    id: 'loc_' + locName.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+                    name: locName,
                     icon: '📍',
-                    fullName: `📍 ${cleaned}`
+                    fullName: `📍 ${locName}`
                 };
             }
         }
 
-        // 3. Name-based heuristics for TVS plant conventions
-        if (lower.includes('ems') || lower.includes('energy') || lower.includes('meter') || lower.includes('power') || lower.includes('substation') || lower.includes('transformer')) {
-            return { id: 'subloc_ems', name: 'Substation & EMS', icon: '⚡', fullName: '⚡ Substation & EMS' };
-        }
-        if (lower.includes('oven') || lower.includes('spray') || lower.includes('paint') || lower.includes('booth') || lower.includes('d6') || lower.includes('p9_d6')) {
-            return { id: 'div_6', name: 'Paintshop (Div 6)', icon: '🏭', fullName: '🏭 Paintshop (Div 6)' };
-        }
-        if (lower.includes('body') || lower.includes('d1')) {
-            return { id: 'div_1', name: 'Body Shop (Div 1)', icon: '🚗', fullName: '🚗 Body Shop (Div 1)' };
-        }
-        if (lower.includes('stamp') || lower.includes('press') || lower.includes('d2')) {
-            return { id: 'div_2', name: 'Stamping (Div 2)', icon: '🔨', fullName: '🔨 Stamping (Div 2)' };
-        }
-        if (lower.includes('assembly') || lower.includes('d3')) {
-            return { id: 'div_3', name: 'Assembly (Div 3)', icon: '🔩', fullName: '🔩 Assembly (Div 3)' };
-        }
-        if (lower.includes('quality') || lower.includes('inspection') || lower.includes('d4')) {
-            return { id: 'div_4', name: 'Quality & Inspection (Div 4)', icon: '🔬', fullName: '🔬 Quality & Inspection (Div 4)' };
-        }
-        if (lower.includes('boiler') || lower.includes('chiller') || lower.includes('utility') || lower.includes('pump') || lower.includes('compressor') || lower.includes('d5')) {
-            return { id: 'div_5', name: 'Utility & Boiler (Div 5)', icon: '🔧', fullName: '🔧 Utility & Boiler (Div 5)' };
-        }
-        if (lower.includes('robot') || lower.includes('d7')) {
-            return { id: 'div_7', name: 'Robotics & Automation (Div 7)', icon: '🤖', fullName: '🤖 Robotics & Automation (Div 7)' };
-        }
-        return { id: 'subloc_main', name: 'Main Production Floor', icon: '🏭', fullName: '🏭 Main Production Floor' };
+        // 3. Fallback to General Devices
+        return { id: 'subloc_general', name: 'General Devices', icon: '⚡', fullName: '⚡ General Devices' };
     }
 
     function ensureTopologicalPillBar(subLocationsList, totalCount) {

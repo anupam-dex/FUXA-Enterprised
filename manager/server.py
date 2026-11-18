@@ -1104,7 +1104,11 @@ async def api_update_device_topology(plant_id: int, request: Request):
     for devices in Plant Storage Server database.
     Rearranges the device tree in FUXA Connections view.
     """
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"success": False, "detail": f"Invalid JSON payload: {e}"})
+
     plant_id = int(plant_id)
     storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
     storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
@@ -1114,104 +1118,247 @@ async def api_update_device_topology(plant_id: int, request: Request):
         os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
     ]
 
+    def _parse_div(val, fallback=6):
+        try:
+            return int(val)
+        except (ValueError, TypeError):
+            return fallback
+
     device_map = {}
     if "updates" in body and isinstance(body["updates"], list):
         for u in body["updates"]:
             if isinstance(u, dict) and "id" in u:
-                device_map[u["id"]] = {
-                    "location": str(u.get("location", "")).strip(),
-                    "subdivision": str(u.get("subdivision", "Line 1")).strip(),
-                    "division": int(u.get("division", 6))
+                device_map[str(u["id"])] = {
+                    "location": str(u.get("location", "") or "").strip(),
+                    "subdivision": str(u.get("subdivision", "Line 1") or "Line 1").strip(),
+                    "division": _parse_div(u.get("division"), 6)
                 }
     elif "device_ids" in body and isinstance(body["device_ids"], list):
-        loc = str(body.get("location", "")).strip()
-        subdiv = str(body.get("subdivision", "Line 1")).strip()
-        div = int(body.get("division", 6))
+        loc = str(body.get("location", "") or "").strip()
+        subdiv = str(body.get("subdivision", "Line 1") or "Line 1").strip()
+        div = _parse_div(body.get("division"), 6)
         for dev_id in body["device_ids"]:
-            device_map[dev_id] = {
+            device_map[str(dev_id)] = {
                 "location": loc,
                 "subdivision": subdiv,
                 "division": div
             }
 
     if not device_map:
-        raise HTTPException(status_code=400, detail="No device topology updates provided.")
+        return JSONResponse(status_code=400, content={"success": False, "detail": "No device topology updates provided."})
 
-    updated_count = 0
+    try:
+        updated_count = 0
+        for db_path in db_paths:
+            if not os.path.exists(db_path):
+                continue
+            try:
+                conn = sqlite3.connect(db_path, timeout=10.0)
+                cur = conn.cursor()
+                cur.execute("PRAGMA busy_timeout = 5000;")
+                cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+                cur.execute("SELECT name, value FROM devices;")
+                rows = cur.fetchall()
+
+                for d_name, d_val in rows:
+                    if d_name in ("server", "0"):
+                        continue
+                    try:
+                        dev = json.loads(d_val)
+                        d_id = str(dev.get("id") or d_name)
+                        target_info = device_map.get(d_id) or device_map.get(d_name) or device_map.get(str(dev.get("name")))
+                        if target_info:
+                            loc = target_info["location"]
+                            subdiv = target_info["subdivision"]
+                            div_id = target_info["division"]
+
+                            dev["location"] = loc
+                            dev["subdivision"] = subdiv
+                            if "property" not in dev or not isinstance(dev["property"], dict):
+                                dev["property"] = {}
+                            dev["property"]["location"] = loc
+                            dev["property"]["subdivision"] = subdiv
+
+                            if "topology" not in dev or not isinstance(dev["topology"], dict):
+                                dev["topology"] = {}
+                            dev["topology"]["plant"] = plant_id
+                            dev["topology"]["division"] = div_id
+                            dev["topology"]["division_name"] = loc
+                            dev["topology"]["location"] = loc
+                            dev["topology"]["subdivision"] = subdiv
+                            dev["topology"]["line_name"] = subdiv
+
+                            cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(dev), d_name))
+                            updated_count += 1
+                    except Exception:
+                        pass
+
+                conn.commit()
+                try:
+                    cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+                except Exception:
+                    pass
+                conn.close()
+
+                for suf in ["-wal", "-shm"]:
+                    lf = db_path + suf
+                    if os.path.exists(lf):
+                        try:
+                            os.remove(lf)
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.error(f"Error updating device topology in {db_path}: {e}")
+
+        # Hot-reload storage server instance so FUXA applies new tree structure
+        try:
+            restart_storage_master(plant_id)
+        except Exception as e:
+            logger.warning(f"Storage master hot-reload notice: {e}")
+
+        return {
+            "success": True,
+            "updated_devices": len(device_map),
+            "message": f"Successfully updated grouping for {len(device_map)} devices! FUXA Storage Server tree rearranged."
+        }
+    except Exception as e:
+        logger.error(f"Failed to update device topology: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "detail": str(e)})
+
+
+@app.post("/api/storage/{plant_id}/purge-simulated-devices")
+def api_purge_simulated_devices(plant_id: int):
+    """
+    Permanently purges all simulated demo devices (Oven Line 1, Spray Booth Line 1,
+    Pre Treatment Line 1, SoftOPC port 4849/4850) from both root and _appdata databases,
+    checkpoints SQLite, and restarts Central Storage.
+    """
+    plant_id = int(plant_id)
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+
+    db_paths = [
+        os.path.join(storage_work_dir, "project.fuxap.db"),
+        os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
+    ]
+    purged_total = 0
     for db_path in db_paths:
         if not os.path.exists(db_path):
             continue
         try:
-            conn = sqlite3.connect(db_path)
+            conn = sqlite3.connect(db_path, timeout=10.0)
             cur = conn.cursor()
+            cur.execute("PRAGMA busy_timeout = 5000;")
             cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
             cur.execute("SELECT name, value FROM devices;")
             rows = cur.fetchall()
-
+            to_del = []
             for d_name, d_val in rows:
                 if d_name in ("server", "0"):
                     continue
                 try:
                     dev = json.loads(d_val)
-                    d_id = dev.get("id") or d_name
-                    target_info = device_map.get(d_id) or device_map.get(d_name) or device_map.get(dev.get("name"))
-                    if target_info:
-                        loc = target_info["location"]
-                        subdiv = target_info["subdivision"]
-                        div_id = target_info["division"]
-
-                        dev["location"] = loc
-                        dev["subdivision"] = subdiv
-                        if "property" not in dev or not isinstance(dev["property"], dict):
-                            dev["property"] = {}
-                        dev["property"]["location"] = loc
-                        dev["property"]["subdivision"] = subdiv
-
-                        if "topology" not in dev or not isinstance(dev["topology"], dict):
-                            dev["topology"] = {}
-                        dev["topology"]["plant"] = plant_id
-                        dev["topology"]["division"] = div_id
-                        dev["topology"]["division_name"] = loc
-                        dev["topology"]["location"] = loc
-                        dev["topology"]["subdivision"] = subdiv
-                        dev["topology"]["line_name"] = subdiv
-
-                        cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(dev), d_name))
-                        updated_count += 1
+                    d_lower = str(dev.get("name") or "").lower()
+                    props = dev.get("property") or {}
+                    addr = str(props.get("address") or props.get("endpoint") or "").lower()
+                    if ("4849" in addr or "4850" in addr or "4851" in addr or "127.0.0.1:48" in addr or "localhost:48" in addr or
+                        any(s in d_lower for s in ("oven line 1", "spray booth line 1", "pre treatment line 1", "plant_9_", "sim_", "boiler_01", "press_line_a", "conveyor_main", "chiller_line_1", "feed_water_pump", "air_compressor"))):
+                        to_del.append(d_name)
                 except Exception:
                     pass
-
+            for d_name in to_del:
+                cur.execute("DELETE FROM devices WHERE name = ?;", (d_name,))
+                try:
+                    cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (d_name,))
+                except Exception:
+                    pass
             conn.commit()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
             conn.close()
+            purged_total = max(purged_total, len(to_del))
+            for suf in ["-wal", "-shm"]:
+                lf = db_path + suf
+                if os.path.exists(lf):
+                    try:
+                        os.remove(lf)
+                    except Exception:
+                        pass
         except Exception as e:
-            logger.error(f"Error updating device topology in {db_path}: {e}")
+            logger.error(f"Error purging simulated devices from {db_path}: {e}")
 
-    # Hot-reload storage server instance so FUXA applies new tree structure
-    storage_inst_id = f"storage_p{plant_id}"
-    try:
-        if storage_inst_id in running_processes:
-            try:
-                running_processes[storage_inst_id].terminate()
-                running_processes[storage_inst_id].wait(timeout=2)
-            except Exception:
-                pass
-        for p in psutil.process_iter(['pid', 'name']):
-            try:
-                for c in p.net_connections():
-                    if c.laddr.port == storage_port:
-                        p.kill()
-            except Exception:
-                pass
-        time.sleep(0.5)
-        _launch_fuxa_instance(storage_inst_id, storage_port, storage_work_dir, f"/p{plant_id}/storage")
-    except Exception as e:
-        logger.warning(f"Storage master hot-reload notice: {e}")
+    # Clean restart storage server
+    restart_storage_master(plant_id)
 
     return {
         "success": True,
-        "updated_devices": len(device_map),
-        "message": f"Successfully updated grouping for {len(device_map)} devices! FUXA Storage Server tree rearranged."
+        "purged_count": purged_total,
+        "message": f"Successfully purged {purged_total} simulated devices! Storage server restarted with only real devices."
     }
+
+
+@app.post("/api/storage/{plant_id}/delete-device")
+async def api_delete_storage_device(plant_id: int, request: Request):
+    """
+    Deletes an individual device by ID from the Central Storage Server.
+    """
+    body = await request.json()
+    device_id = str(body.get("device_id") or body.get("id") or "").strip()
+    if not device_id or device_id in ("server", "0"):
+        return JSONResponse(status_code=400, content={"success": False, "detail": "Invalid device_id specified."})
+
+    plant_id = int(plant_id)
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+
+    db_paths = [
+        os.path.join(storage_work_dir, "project.fuxap.db"),
+        os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
+    ]
+    for db_path in db_paths:
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = sqlite3.connect(db_path, timeout=10.0)
+            cur = conn.cursor()
+            cur.execute("PRAGMA busy_timeout = 5000;")
+            cur.execute("DELETE FROM devices WHERE name = ?;", (device_id,))
+            cur.execute("SELECT name, value FROM devices;")
+            for d_name, d_val in cur.fetchall():
+                if d_name in ("server", "0"):
+                    continue
+                try:
+                    dev = json.loads(d_val)
+                    if str(dev.get("id")) == device_id or str(dev.get("name")) == device_id:
+                        cur.execute("DELETE FROM devices WHERE name = ?;", (d_name,))
+                except Exception:
+                    pass
+            try:
+                cur.execute("DELETE FROM devicesSecurity WHERE name = ?;", (device_id,))
+            except Exception:
+                pass
+            conn.commit()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+            conn.close()
+            for suf in ["-wal", "-shm"]:
+                lf = db_path + suf
+                if os.path.exists(lf):
+                    try:
+                        os.remove(lf)
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.error(f"Error deleting device {device_id} from {db_path}: {e}")
+
+    # Hot restart storage server
+    restart_storage_master(plant_id)
+
+    return {"success": True, "message": f"Device '{device_id}' removed from Plant {plant_id} Central Storage."}
 
 class ConnectDeviceRequest(BaseModel):
     plant: int

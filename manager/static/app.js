@@ -1396,8 +1396,12 @@ function closeDeviceTopologyModal() {
 function handleTopologyPresetChange() {
     const preset = document.getElementById('topo-bulk-preset')?.value || '';
     const locInput = document.getElementById('topo-bulk-location');
+    const subdivInput = document.getElementById('topo-bulk-subdiv');
     if (!locInput) return;
-    if (preset && preset !== '__custom__') {
+    if (preset === '__none__') {
+        locInput.value = '';
+        if (subdivInput) subdivInput.value = '';
+    } else if (preset && preset !== '__custom__') {
         locInput.value = preset;
     } else if (preset === '__custom__') {
         locInput.value = '';
@@ -1419,7 +1423,7 @@ async function loadStorageTopologyDevices() {
     }
 
     if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">⏳ Loading devices from Plant ' + plantId + ' Storage...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding: 24px; text-align: center; color: #94a3b8;">⏳ Loading devices from Plant ' + plantId + ' Storage...</td></tr>';
     }
 
     try {
@@ -1427,10 +1431,30 @@ async function loadStorageTopologyDevices() {
         const data = await resp.json();
         topoDevicesList = data.devices || [];
         selectedTopoDeviceIds.clear();
+
+        // Dynamically add unique active locations to preset dropdown so user can pick/reassign them
+        const presetSelect = document.getElementById('topo-bulk-preset');
+        if (presetSelect) {
+            const activeLocs = new Set();
+            topoDevicesList.forEach(d => {
+                if (d.location && d.location.trim()) activeLocs.add(d.location.trim());
+            });
+            const existingOptValues = new Set(Array.from(presetSelect.options).map(o => o.value));
+            activeLocs.forEach(loc => {
+                if (!existingOptValues.has(loc)) {
+                    const opt = document.createElement('option');
+                    opt.value = loc;
+                    opt.textContent = `📍 ${loc}`;
+                    opt.dataset.div = '6';
+                    presetSelect.appendChild(opt);
+                }
+            });
+        }
+
         renderTopoDevicesTable();
     } catch (err) {
         if (tbody) {
-            tbody.innerHTML = `<tr><td colspan="7" style="padding: 24px; text-align: center; color: #f87171;">❌ Failed to load devices: ${err.message}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="8" style="padding: 24px; text-align: center; color: #f87171;">❌ Failed to load devices: ${err.message}</td></tr>`;
         }
     }
 }
@@ -1447,7 +1471,7 @@ function renderTopoDevicesTable() {
 
     if (!tbody) return;
     if (topoDevicesList.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">No devices configured in this Storage Server yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" style="padding: 24px; text-align: center; color: #94a3b8;">No devices configured in this Storage Server yet.</td></tr>';
         return;
     }
 
@@ -1488,6 +1512,11 @@ function renderTopoDevicesTable() {
                            onchange="updateInlineTopoDevice('${dev.id}', 'subdivision', this.value)"
                            style="width: 100%; background: #020617; border: 1px solid #334155; color: #cbd5e1; padding: 5px 8px; border-radius: 4px; font-size: 0.8rem;">
                 </td>
+                <td style="padding: 6px 12px; text-align: center;">
+                    <button type="button" class="btn btn-sm" onclick="event.stopPropagation(); deleteStorageDevice('${dev.id}', '${(dev.name || dev.id).replace(/'/g, "\\'")}')" title="Delete device from storage" style="background: rgba(239,68,68,0.15); border: 1px solid #ef4444; color: #fca5a5; padding: 3px 8px; border-radius: 4px; font-size: 0.72rem; cursor: pointer;">
+                        🗑️
+                    </button>
+                </td>
             </tr>
         `;
     }).join('');
@@ -1523,10 +1552,6 @@ function applyBulkTopology() {
     const loc = (document.getElementById('topo-bulk-location')?.value || '').trim();
     const subdiv = (document.getElementById('topo-bulk-subdiv')?.value || 'Line 1').trim();
 
-    if (!loc) {
-        alert('Please enter or select a Sub-Location name to assign.');
-        return;
-    }
     if (selectedTopoDeviceIds.size === 0) {
         alert('Please select at least one device from the table.');
         return;
@@ -1547,6 +1572,68 @@ function applyBulkTopology() {
     renderTopoDevicesTable();
 }
 
+async function deleteStorageDevice(devId, devName) {
+    if (!confirm(`Are you sure you want to permanently delete device "${devName}" from this Central Storage Server?`)) {
+        return;
+    }
+    const plantId = document.getElementById('topo-storage-plant')?.value || '9';
+    try {
+        const resp = await fetch(`/api/storage/${plantId}/delete-device`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_id: devId })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            loadStorageTopologyDevices();
+        } else {
+            alert('Failed to delete device: ' + (data.detail || data.message || 'Unknown error'));
+        }
+    } catch (err) {
+        alert('Network error deleting device: ' + err.message);
+    }
+}
+
+async function purgeSimulatedStorageDevices() {
+    const plantId = document.getElementById('topo-storage-plant')?.value || '9';
+    if (!confirm(`Are you sure you want to purge all simulated demo devices (e.g. Oven Line 1, Spray Booth Line 1, Pre Treatment Line 1, port 4849 SoftOPC) from Plant ${plantId} Storage Server? This will permanently remove them from the database and restart the server.`)) {
+        return;
+    }
+    const resBox = document.getElementById('topo-results-box');
+    if (resBox) {
+        resBox.style.display = 'block';
+        resBox.style.background = '#0f172a';
+        resBox.style.border = '1px solid #334155';
+        resBox.style.color = '#94a3b8';
+        resBox.innerHTML = '🧹 Purging simulated demo devices and cleaning database...';
+    }
+    try {
+        const resp = await fetch(`/api/storage/${plantId}/purge-simulated-devices`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            if (resBox) {
+                resBox.style.background = '#064e3b';
+                resBox.style.border = '1px solid #10b981';
+                resBox.style.color = '#a7f3d0';
+                resBox.innerHTML = `✓ ${data.message || 'Purged simulated devices successfully!'}`;
+            }
+            loadStorageTopologyDevices();
+        } else {
+            throw new Error(data.detail || data.message || 'Failed to purge devices');
+        }
+    } catch (err) {
+        if (resBox) {
+            resBox.style.background = 'rgba(239, 68, 68, 0.15)';
+            resBox.style.border = '1px solid #ef4444';
+            resBox.style.color = '#fca5a5';
+            resBox.innerHTML = `❌ Error: ${err.message}`;
+        }
+    }
+}
+
 async function saveDeviceTopology() {
     const plantId = document.getElementById('topo-storage-plant')?.value || '9';
     const btn = document.getElementById('btn-save-topology');
@@ -1564,12 +1651,21 @@ async function saveDeviceTopology() {
         resBox.innerHTML = 'Updating device topology in SQLite and applying tree layout...';
     }
 
-    const updates = topoDevicesList.map(d => ({
-        id: d.id,
-        location: d.location || '',
-        subdivision: d.subdivision || 'Line 1',
-        division: d.division || 6
-    }));
+    const updates = topoDevicesList.map(d => {
+        let divNum = 6;
+        if (typeof d.division === 'number' && !isNaN(d.division)) {
+            divNum = d.division;
+        } else if (typeof d.division === 'string') {
+            const parsed = parseInt(d.division, 10);
+            if (!isNaN(parsed)) divNum = parsed;
+        }
+        return {
+            id: d.id,
+            location: (d.location || '').trim(),
+            subdivision: (d.subdivision || 'Line 1').trim(),
+            division: divNum
+        };
+    });
 
     try {
         const resp = await fetch(`/api/storage/${plantId}/update-device-topology`, {
@@ -1577,7 +1673,13 @@ async function saveDeviceTopology() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ updates: updates })
         });
-        const data = await resp.json();
+        let data;
+        try {
+            data = await resp.json();
+        } catch (jErr) {
+            const rawText = await resp.text();
+            throw new Error(`Server returned error (${resp.status}): ${rawText || jErr.message}`);
+        }
 
         if (resp.ok && data.success) {
             const storagePort = (plantId === '9') ? 5900 : 5000 + parseInt(plantId, 10) * 100;

@@ -38,13 +38,23 @@ FLEET_MANAGER_URL = os.environ.get("FLEET_MANAGER_URL", "http://localhost:9000")
 
 def resolve_db_path(plant_id: int = 9, instance_id: str = None) -> tuple[str, str, int]:
     """Resolves target database path and port from plant or instance ID"""
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    canonical_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+
     if instance_id:
         target_dir = os.path.join(INSTANCES_DIR, instance_id)
         db_path = os.path.join(target_dir, "project.fuxap.db")
         if os.path.exists(db_path):
-            return db_path, target_dir, 0
+            return db_path, target_dir, storage_port
 
-    # 1. Check registry.json
+    # 1. Check canonical directory first
+    if os.path.exists(canonical_dir):
+        db_path = os.path.join(canonical_dir, "project.fuxap.db")
+        appdata_db = os.path.join(canonical_dir, "_appdata", "project.fuxap.db")
+        if os.path.exists(appdata_db) or os.path.exists(db_path):
+            return db_path, canonical_dir, storage_port
+
+    # 2. Check registry.json
     reg_paths = [
         os.path.join(INSTANCES_DIR, "registry.json"),
         os.path.join(BASE_DIR, "manager", "registry.json")
@@ -58,22 +68,22 @@ def resolve_db_path(plant_id: int = 9, instance_id: str = None) -> tuple[str, st
                         if inst.get("role") == "storage" and int(inst.get("plant_id", 0)) == plant_id:
                             target_dir = os.path.join(INSTANCES_DIR, iid)
                             db_path = os.path.join(target_dir, "project.fuxap.db")
-                            return db_path, target_dir, int(inst.get("port", 0))
+                            return db_path, target_dir, int(inst.get("port", storage_port))
             except Exception:
                 pass
 
-    # 2. Heuristic scan of instances/ directory
+    # 3. Heuristic scan of instances/ directory
     if os.path.exists(INSTANCES_DIR):
         for entry in os.listdir(INSTANCES_DIR):
             if f"storage_plant_{plant_id}" in entry or f"storage_{plant_id}" in entry or f"p{plant_id}" in entry:
                 cand_dir = os.path.join(INSTANCES_DIR, entry)
                 cand_db = os.path.join(cand_dir, "project.fuxap.db")
-                if os.path.exists(cand_db):
-                    return cand_db, cand_dir, 0
+                cand_appdata = os.path.join(cand_dir, "_appdata", "project.fuxap.db")
+                if os.path.exists(cand_db) or os.path.exists(cand_appdata):
+                    return cand_db, cand_dir, storage_port
 
-    # 3. Default fallback
-    target_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}")
-    return os.path.join(target_dir, "project.fuxap.db"), target_dir, 5000 + (plant_id * 100)
+    # 4. Default fallback
+    return os.path.join(canonical_dir, "project.fuxap.db"), canonical_dir, storage_port
 
 
 def configure_bulk_history(
@@ -88,31 +98,38 @@ def configure_bulk_history(
     restart_instance: bool = False
 ) -> dict:
     """
-    Applies bulk historical DAQ settings to tags in the SQLite database.
+    Applies bulk historical DAQ settings to tags in both root and _appdata SQLite databases.
     """
-    db_path, work_dir, port = resolve_db_path(plant_id, instance_id)
+    primary_db, work_dir, port = resolve_db_path(plant_id, instance_id)
 
-    if not os.path.exists(db_path):
+    appdata_dir = os.path.join(work_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+    root_db = os.path.join(work_dir, "project.fuxap.db")
+    appdata_db = os.path.join(appdata_dir, "project.fuxap.db")
+
+    # Reconcile if one exists and the other doesn't
+    if not os.path.exists(root_db) and os.path.exists(appdata_db):
+        shutil.copy2(appdata_db, root_db)
+    elif os.path.exists(root_db) and not os.path.exists(appdata_db):
+        shutil.copy2(root_db, appdata_db)
+
+    target_dbs = [p for p in [root_db, appdata_db] if os.path.exists(p)]
+
+    if not target_dbs:
         return {
             "success": False,
-            "error": f"Database not found at '{db_path}'. Ensure the storage instance exists.",
+            "error": f"Database not found at '{root_db}'. Ensure the storage instance exists.",
             "plant_id": plant_id
         }
 
     # Backup before write
     backup_path = None
     if create_backup and not dry_run:
-        os.makedirs(work_dir, exist_ok=True)
-        backup_path = f"{db_path}.bak_{int(time.time())}"
-        shutil.copy2(db_path, backup_path)
-
-    conn = sqlite3.connect(db_path, timeout=5.0)
-    cur = conn.cursor()
-    cur.execute("PRAGMA journal_mode = WAL;")
-    cur.execute("PRAGMA busy_timeout = 5000;")
-
-    cur.execute("SELECT name, value FROM devices;")
-    rows = cur.fetchall()
+        for p in target_dbs:
+            bak = f"{p}.bak_{int(time.time())}"
+            shutil.copy2(p, bak)
+            if not backup_path:
+                backup_path = bak
 
     mode_norm = (mode or "change").lower()
     on_change = mode_norm in ("change", "both")
@@ -122,65 +139,95 @@ def configure_bulk_history(
     total_tags_updated = 0
     total_devices_affected = 0
 
-    for d_name, d_val in rows:
-        if d_name in ("server", "0"):
-            continue
+    for db_path in target_dbs:
+        conn = sqlite3.connect(db_path, timeout=10.0)
+        cur = conn.cursor()
+        cur.execute("PRAGMA journal_mode = WAL;")
+        cur.execute("PRAGMA busy_timeout = 5000;")
 
-        try:
-            dev = json.loads(d_val)
-        except Exception:
-            continue
+        cur.execute("SELECT name, value FROM devices;")
+        rows = cur.fetchall()
 
-        dev_name = dev.get("name") or d_name
-        dev_id = dev.get("id") or d_name
+        curr_tags_updated = 0
+        curr_devs_affected = 0
 
-        # Apply device filter if specified
-        if device_filter:
-            filt_norm = device_filter.lower().strip()
-            if filt_norm not in dev_name.lower() and filt_norm != dev_id.lower():
+        for d_name, d_val in rows:
+            if d_name in ("server", "0"):
                 continue
 
-        tags = dev.get("tags") or {}
-        if not tags or not isinstance(tags, dict):
-            continue
-
-        dev_tag_count = 0
-        for t_id, tag in tags.items():
-            if not isinstance(tag, dict):
+            try:
+                dev = json.loads(d_val)
+            except Exception:
                 continue
 
-            tag["daq"] = {
-                "enabled": bool(enabled),
-                "changed": bool(on_change),
-                "interval": int(fix_interval),
-                "restored": False
-            }
-            dev_tag_count += 1
+            dev_name = dev.get("name") or d_name
+            dev_id = dev.get("id") or d_name
 
-        if dev_tag_count > 0:
-            total_devices_affected += 1
-            total_tags_updated += dev_tag_count
-            updated_devices.append({
-                "device_id": dev_id,
-                "device_name": dev_name,
-                "tags_configured": dev_tag_count
-            })
+            # Apply device filter if specified
+            if device_filter:
+                filt_norm = device_filter.lower().strip()
+                if filt_norm not in dev_name.lower() and filt_norm != dev_id.lower():
+                    continue
 
-            if not dry_run:
-                new_json = json.dumps(dev)
-                cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (new_json, d_name))
+            tags = dev.get("tags") or {}
+            if not tags or not isinstance(tags, dict):
+                continue
 
-    if not dry_run:
-        conn.commit()
+            dev_tag_count = 0
+            for t_id, tag in tags.items():
+                if not isinstance(tag, dict):
+                    continue
 
-    conn.close()
+                tag["daq"] = {
+                    "enabled": bool(enabled),
+                    "changed": bool(on_change),
+                    "interval": int(fix_interval),
+                    "restored": False
+                }
+                dev_tag_count += 1
+
+            if dev_tag_count > 0:
+                curr_devs_affected += 1
+                curr_tags_updated += dev_tag_count
+                if not updated_devices or not any(d["device_id"] == dev_id for d in updated_devices):
+                    updated_devices.append({
+                        "device_id": dev_id,
+                        "device_name": dev_name,
+                        "tags_configured": dev_tag_count
+                    })
+
+                if not dry_run:
+                    new_json = json.dumps(dev)
+                    cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (new_json, d_name))
+
+        if not dry_run:
+            conn.commit()
+            try:
+                cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            except Exception:
+                pass
+
+        conn.close()
+
+        # Clean lock files
+        if not dry_run:
+            for suf in ["-wal", "-shm"]:
+                lf = db_path + suf
+                if os.path.exists(lf):
+                    try:
+                        os.remove(lf)
+                    except Exception:
+                        pass
+
+        total_tags_updated = max(total_tags_updated, curr_tags_updated)
+        total_devices_affected = max(total_devices_affected, curr_devs_affected)
 
     result = {
         "success": True,
         "dry_run": dry_run,
         "plant_id": plant_id,
         "instance_id": instance_id or os.path.basename(work_dir),
-        "db_path": db_path,
+        "db_path": root_db,
         "backup_path": backup_path,
         "enabled": enabled,
         "mode": mode_norm,
@@ -197,15 +244,22 @@ def configure_bulk_history(
 
 
 def _trigger_restart(plant_id: int, instance_id: str = None):
-    """Signals Fleet Manager to restart the target instance cleanly"""
-    target_id = instance_id or f"storage_plant_{plant_id}"
+    """Signals Fleet Manager to restart the target storage instance cleanly"""
     try:
-        url = f"{FLEET_MANAGER_URL}/api/instances/{target_id}/start"
-        req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
+        url = f"{FLEET_MANAGER_URL.rstrip('/')}/api/storage/{plant_id}/restart"
+        req = urllib.request.Request(url, data=b"{}", headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
             pass
     except Exception:
-        pass
+        try:
+            import sys
+            mgr_dir = os.path.join(BASE_DIR, "manager")
+            if mgr_dir not in sys.path:
+                sys.path.insert(0, mgr_dir)
+            from server import restart_storage_master
+            restart_storage_master(plant_id)
+        except Exception:
+            pass
 
 
 def main():
