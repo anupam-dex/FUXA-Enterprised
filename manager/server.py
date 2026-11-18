@@ -164,6 +164,37 @@ async def process_watchdog_loop():
 
         await asyncio.sleep(watchdog_state["interval_seconds"])
 
+def purge_simulated_devices_from_storage(db_path: str):
+    """Purges any legacy simulated devices from database permanently"""
+    if not os.path.exists(db_path):
+        return
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+        cur.execute("SELECT name, value FROM devices;")
+        rows = cur.fetchall()
+        to_delete = []
+        for d_id, d_val in rows:
+            if d_id in ("server", "0"):
+                continue
+            try:
+                dev = json.loads(d_val)
+                name = str(dev.get("name") or "").lower()
+                props = dev.get("property") or {}
+                addr = str(props.get("address") or props.get("endpoint") or "").lower()
+                if "4849" in addr or "4850" in addr or "127.0.0.1:48" in addr or "localhost:48" in addr or any(s in name for s in ("oven line 1", "spray booth line 1", "pre treatment line 1", "sim_", "boiler_01", "press_line_a", "conveyor_main", "chiller_line_1", "feed_water_pump", "air_compressor")):
+                    to_delete.append(d_id)
+            except Exception:
+                pass
+        for d_id in to_delete:
+            cur.execute("DELETE FROM devices WHERE name = ?;", (d_id,))
+            logger.info(f"Purged simulated device '{d_id}' from {db_path}")
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Could not purge simulated devices from {db_path}: {e}")
+
 def ensure_default_storage_servers():
     """Hosts central storage collector instances for each plant by default"""
     plants = port_engine.registry.get("plants", {})
@@ -171,10 +202,17 @@ def ensure_default_storage_servers():
         storage_port = p_info["storage_port"]
         storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
         os.makedirs(storage_work_dir, exist_ok=True)
+        os.makedirs(os.path.join(storage_work_dir, "_appdata"), exist_ok=True)
+
+        db_path = os.path.join(storage_work_dir, "project.fuxap.db")
+        appdata_db = os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
+
+        # Automatically purge simulated devices from existing storage databases
+        purge_simulated_devices_from_storage(db_path)
+        purge_simulated_devices_from_storage(appdata_db)
 
         if not port_engine.is_port_in_use(storage_port):
             logger.info(f"Hosting Central Storage Server for Plant {plant_id} on Port {storage_port}...")
-            db_path = os.path.join(storage_work_dir, "project.fuxap.db")
             if not os.path.exists(db_path):
                 generate_fuxa_database(
                     target_dir=storage_work_dir,
@@ -189,18 +227,10 @@ def ensure_default_storage_servers():
 @app.on_event("startup")
 async def on_startup():
     logger.info("Initializing FUXA Fleet Orchestrator...")
-    # 1. Host storage servers for all plants by default
+    # 1. Host storage servers for all plants by default (clean, no simulators)
     ensure_default_storage_servers()
 
-    # 2. Auto-start 5 Soft OPC-UA Industrial Simulators for testing & lab validation
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        asyncio.create_task(soft_opc_manager.start_all())
-        logger.info("Started 5 Soft OPC-UA Simulators on Ports 4850-4854")
-    except Exception as e:
-        logger.warning(f"Could not initialize Soft OPC-UA Simulators: {e}")
-
-    # 3. Automatically restore, sync tags and re-launch all existing view servers
+    # 2. Automatically restore, sync tags and re-launch all existing view servers
     instances = port_engine.get_all_instances()
     started_ports = set()
     for inst_id, inst in list(instances.items()):
@@ -1147,165 +1177,6 @@ def build_client():
     except Exception as e:
         return {"success": False, "error": str(e)}
 
-# --- Soft OPC-UA Simulator APIs ---
-
-@app.get("/api/simulator/status")
-def get_simulator_status():
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        return soft_opc_manager.get_status()
-    except Exception as e:
-        return {"error": str(e), "is_lab_active": False, "servers": []}
-
-@app.get("/api/simulator/{server_id}/tags")
-def get_simulator_tags(server_id: str):
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        return {"server_id": server_id, "tags": soft_opc_manager.get_live_tags(server_id)}
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.post("/api/simulator/{server_id}/start")
-async def start_sim_server(server_id: str):
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        success = await soft_opc_manager.start_server(server_id)
-        return {"success": success, "server_id": server_id}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/{server_id}/stop")
-async def stop_sim_server(server_id: str):
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        success = await soft_opc_manager.stop_server(server_id)
-        return {"success": success, "server_id": server_id}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/{server_id}/drop")
-async def drop_sim_network(server_id: str, duration: int = 5):
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        success = await soft_opc_manager.drop_network(server_id, duration)
-        return {"success": success, "server_id": server_id, "duration": duration}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/{server_id}/glitch")
-def glitch_sim_server(server_id: str, duration: int = 6):
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        success = soft_opc_manager.glitch_server(server_id, duration)
-        return {"success": success, "server_id": server_id}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/start-all")
-async def start_all_simulators():
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        success = await soft_opc_manager.start_all()
-        return {"success": success}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/stop-all")
-async def stop_all_simulators():
-    try:
-        from simulator.soft_opcua_engine import soft_opc_manager
-        await soft_opc_manager.stop_all()
-        return {"success": True}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-@app.post("/api/simulator/{server_id}/add-to-storage")
-def add_sim_to_storage(server_id: str):
-    """Maps a simulated OPC-UA server into its plant storage database for immediate acquisition"""
-    from simulator.soft_opcua_engine import SIMULATOR_CONFIGS
-    cfg = next((c for c in SIMULATOR_CONFIGS if c["id"] == server_id), None)
-    if not cfg:
-        raise HTTPException(status_code=404, detail="Simulator config not found")
-
-    plant_id = cfg.get("plant", 9)
-    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
-    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
-    db_file = os.path.join(storage_work_dir, "project.fuxap.db")
-
-    if not os.path.exists(db_file):
-        raise HTTPException(status_code=400, detail=f"Storage DB not found at {db_file}")
-
-    import sqlite3
-    conn = sqlite3.connect(db_file)
-    cur = conn.cursor()
-
-    dev_id = f"dev_opc_{server_id}"
-    dev_name = cfg['name'].replace(' ', '_')
-    
-    # Pre-generate tags dictionary
-    tags_dict = {}
-    for i, t in enumerate(cfg["tags"]):
-        tid = f"tag_{server_id}_{i+1}"
-        tags_dict[tid] = {
-            "id": tid,
-            "name": t["name"],
-            "type": t.get("type", "number"),
-            "address": f"ns=2;s={t['name']}",
-            "daq": {"enabled": True, "restored": False}
-        }
-
-    dev_obj = {
-        "id": dev_id,
-        "name": dev_name,
-        "type": "OPCUA",
-        "enabled": True,
-        "polling": 1000,
-        "property": {
-            "address": cfg["client_endpoint"],
-            "options": {"securityMode": "None", "securityPolicy": "None"}
-        },
-        "tags": tags_dict,
-        "topology": {
-            "plant": plant_id,
-            "division": cfg.get("division", 6),
-            "line": cfg.get("line", 1)
-        }
-    }
-
-    cur.execute(
-        "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-        (dev_id, json.dumps(dev_obj), "opc-ua", "", "")
-    )
-    conn.commit()
-    conn.close()
-
-    # Gracefully restart storage master so FUXA immediately acquires the device & tags
-    try:
-        storage_inst_id = f"storage_p{plant_id}"
-        if storage_inst_id in running_processes:
-            try:
-                running_processes[storage_inst_id].terminate()
-                running_processes[storage_inst_id].wait(timeout=2)
-            except Exception:
-                pass
-        for p in psutil.process_iter(['pid', 'name']):
-            try:
-                for c in p.net_connections():
-                    if c.laddr.port == storage_port:
-                        p.kill()
-            except Exception:
-                pass
-        time.sleep(0.5)
-        _launch_fuxa_instance(storage_inst_id, storage_port, storage_work_dir, f"/p{plant_id}/storage")
-    except Exception as e:
-        logger.warning(f"Storage master hot-reload notice: {e}")
-
-    return {
-        "success": True,
-        "message": f"Successfully mapped {dev_name} ({len(tags_dict)} tags) into Plant {plant_id} Storage Server (: {storage_port})!",
-        "device": dev_obj
-    }
-
 # ==============================================================================
 # OT Reliability: 1-Click Disaster Recovery & Backup Snapshots
 # ==============================================================================
@@ -1511,15 +1382,6 @@ def serve_index():
         with open(index_file, "r", encoding="utf-8") as f:
             return f.read()
     return "<h3>FUXA Fleet Manager: index.html not found</h3>"
-
-@app.get("/simulator", response_class=HTMLResponse)
-@app.get("/softopc", response_class=HTMLResponse)
-def serve_simulator():
-    sim_file = os.path.join(static_dir, "simulator.html")
-    if os.path.exists(sim_file):
-        with open(sim_file, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h3>FUXA Soft OPC-UA Simulator: simulator.html not found</h3>"
 
 if __name__ == "__main__":
     import uvicorn

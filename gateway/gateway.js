@@ -113,8 +113,8 @@ function findTarget(reqUrl) {
         return bestMatch;
     }
 
-    // Route root /, /simulator, /softopc, /static/, and manager /api/ to Fleet Manager
-    if (pathname === '/' || pathname === '/simulator' || pathname === '/softopc' || pathname.startsWith('/static/') || pathname.startsWith('/api/')) {
+    // Route root /, /static/, and manager /api/ to Fleet Manager
+    if (pathname === '/' || pathname.startsWith('/static/') || pathname.startsWith('/api/')) {
         return { port: FLEET_MANAGER_PORT, prefix: '', name: 'FleetManager' };
     }
 

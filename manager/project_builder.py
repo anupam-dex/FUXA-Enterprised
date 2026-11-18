@@ -31,74 +31,8 @@ TVS_SVG_PATHS = (
 )
 TVS_SVG_PATHS_WHITE = TVS_SVG_PATHS
 
-# Standard industrial tags catalog for each plant
-PLANT_STORAGE_TAGS_CATALOG = {
-    1: {  # Plant 1 - Foundry & Powerhouse
-        "Boiler_House": {
-            "Boiler_01": [
-                ("Steam_Pressure_Bar", 10.5, "number", "Steam Pressure (Bar)"),
-                ("Steam_Temp_C", 185.0, "number", "Steam Temperature (°C)"),
-                ("Burner_Status", True, "boolean", "Boiler Burner Status")
-            ],
-            "Feed_Water_Pump": [
-                ("Flow_Rate_M3H", 45.2, "number", "Feed Water Flow Rate (m³/h)"),
-                ("Pump_Running", True, "boolean", "Feed Water Pump State")
-            ]
-        }
-    },
-    2: {  # Plant 2 - Stamping & Press
-        "Stamping_Shop": {
-            "Press_Line_A": [
-                ("Tonnage_Ton", 850.0, "number", "Main Ram Tonnage (Ton)"),
-                ("Cycle_Count", 14200.0, "number", "Press Cycle Count"),
-                ("Clutch_Engaged", True, "boolean", "Flywheel Clutch State")
-            ]
-        }
-    },
-    3: {  # Plant 3 - Body & Assembly
-        "Assembly_Shop": {
-            "Conveyor_Main": [
-                ("Line_Speed_MPM", 12.5, "number", "Conveyor Line Speed (m/min)"),
-                ("E_Stop_Active", False, "boolean", "Emergency Stop Line Circuit"),
-                ("Takt_Time_Sec", 58.0, "number", "Takt Time Target (s)")
-            ]
-        }
-    },
-    4: {  # Plant 4 - Powertrain & Engine
-        "Facility_Utilities": {
-            "Chiller_Line_1": [
-                ("Chiller_Temp_C", 7.2, "number", "Chilled Water Supply (°C)"),
-                ("Compressor_Current_A", 145.0, "number", "Compressor Current Draw (A)"),
-                ("Chiller_Running", True, "boolean", "Chiller Active State")
-            ],
-            "Air_Compressor": [
-                ("Header_Pressure_Bar", 7.8, "number", "Main Air Header Pressure (Bar)"),
-                ("Motor_Speed_RPM", 1750.0, "number", "Compressor Motor Speed (RPM)")
-            ]
-        }
-    },
-    9: {  # Plant 9 - Paintshop Complex
-        "Paintshop_Division_6": {
-            "Oven_Line_1": [
-                ("Zone1_Temperature_C", 165.2, "number", "Curing Oven Zone 1 Temp (°C)"),
-                ("Zone2_Temperature_C", 178.4, "number", "Curing Oven Zone 2 Temp (°C)"),
-                ("Exhaust_Fan_Running", True, "boolean", "Exhaust Draft Fan State"),
-                ("Oven_Burner_Fault", False, "boolean", "Burner Flame Safety Status")
-            ],
-            "Spray_Booth_Line_1": [
-                ("Booth_Static_Pressure_Pa", 25.0, "number", "Spray Booth Air Balance (Pa)"),
-                ("Paint_Flow_CC_Min", 350.0, "number", "Atomizer Paint Delivery (cc/min)"),
-                ("Robot_Armed", True, "boolean", "Bell Applicator Robot Armed"),
-                ("Downdraft_Velocity_MPS", 0.45, "number", "Booth Downdraft Airflow (m/s)")
-            ],
-            "Pre_Treatment_Line_1": [
-                ("Degreasing_Tank_Temp_C", 55.0, "number", "Alkaline Degreasing Temp (°C)"),
-                ("Rinse_Tank_pH", 7.2, "number", "Demineralized Rinse Water pH"),
-                ("Circulation_Pump_Running", True, "boolean", "Dip Tank Circulation Pump State")
-            ]
-        }
-    }
-}
+# Standard industrial tags catalog for each plant (Clean - Real field devices only, zero simulation)
+PLANT_STORAGE_TAGS_CATALOG = {}
 
 def get_storage_tags_for_plant(plant_id: int, division_name: str = None, base_dir: str = None) -> dict:
     """

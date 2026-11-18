@@ -524,6 +524,18 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
 
     print("[+] Database committed successfully.")
 
+    # Mirror to runtime _appdata/ where FUXA server reads it
+    try:
+        appdata_dir = os.path.join(work_dir, "_appdata")
+        os.makedirs(appdata_dir, exist_ok=True)
+        dest_db = os.path.join(appdata_dir, "project.fuxap.db")
+        if os.path.abspath(db_path) != os.path.abspath(dest_db):
+            import shutil
+            shutil.copy2(db_path, dest_db)
+            print(f"[+] Mirrored database to FUXA runtime path: {dest_db}")
+    except Exception as e:
+        print(f"[*] Note: Could not mirror to _appdata: {e}")
+
     # 7. Request View Server reload via Fleet Manager
     try:
         reload_url = f"{FLEET_MANAGER_URL.rstrip('/')}/api/instances/{inst_id}/sync-tags"

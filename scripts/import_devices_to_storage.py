@@ -37,6 +37,11 @@ BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 INSTANCES_DIR = os.path.join(BASE_DIR, "instances")
 FLEET_MANAGER_URL = os.environ.get("FLEET_MANAGER_URL", "http://localhost:9000")
 
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+if os.path.join(BASE_DIR, "manager") not in sys.path:
+    sys.path.insert(0, os.path.join(BASE_DIR, "manager"))
+
 
 def normalize_string(val: str) -> str:
     """Normalizes a string for robust matching (lowercase, alphanumeric only)"""
@@ -94,8 +99,28 @@ def compute_device_signature(dev: dict) -> str:
     return f"{dev_type}://name/{name_norm}"
 
 
+def is_simulated_device(dev: dict) -> bool:
+    """Detects simulated or soft-opc devices so they are never retained or imported"""
+    name = str(dev.get("name") or "").lower()
+    props = dev.get("property") or {}
+    addr = str(props.get("address") or props.get("endpoint") or "").lower()
+    if any(p in addr for p in ("4849", "4850", "4851", "4852", "4853", "4854", "127.0.0.1:48", "localhost:48")):
+        return True
+    sim_keywords = (
+        "oven line 1", "spray booth line 1", "pre treatment line 1",
+        "plant_9_oven", "plant_9_booth", "plant_9_pretreatment",
+        "boiler_01", "press_line_a", "conveyor_main", "chiller_line_1",
+        "feed_water_pump", "air_compressor"
+    )
+    if any(k in name for k in sim_keywords):
+        return True
+    return False
+
+
 def is_ignored_device(dev: dict) -> bool:
-    """Filters out internal FUXA Server device, loopback, or central storage bridges"""
+    """Filters out internal FUXA Server device, loopback, or legacy simulated devices"""
+    if is_simulated_device(dev):
+        return True
     dev_id = str(dev.get("id") or "").lower()
     dev_type = str(dev.get("type") or "").lower()
     dev_name = str(dev.get("name") or "").lower()
@@ -125,43 +150,56 @@ def load_project_file(source) -> tuple[dict, str]:
     return data, os.path.basename(source)
 
 
-def resolve_storage_db_path(plant_id: int) -> tuple[str, str, int]:
-    """Finds the project.fuxap.db path for the target Plant Storage Server"""
+def resolve_storage_db_paths(plant_id: int) -> tuple[list[str], str, int]:
+    """Finds all project.fuxap.db paths (both root and _appdata) for the target Plant Storage Server"""
     plant_id = int(plant_id)
     storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
     folder_name = f"storage_plant_{plant_id}_{storage_port}"
     work_dir = os.path.join(INSTANCES_DIR, folder_name)
     os.makedirs(work_dir, exist_ok=True)
-    db_path = os.path.join(work_dir, "project.fuxap.db")
-    return db_path, work_dir, storage_port
+    appdata_dir = os.path.join(work_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+
+    db_paths = [
+        os.path.join(appdata_dir, "project.fuxap.db"),
+        os.path.join(work_dir, "project.fuxap.db")
+    ]
+    return db_paths, work_dir, storage_port
 
 
-def load_existing_storage_devices(db_path: str) -> dict:
+def load_existing_storage_devices(db_paths: list[str]) -> dict:
     """
-    Loads existing devices from the target Storage Server's SQLite DB.
-    Returns: dict keyed by device id.
+    Loads existing real devices from the target Storage Server's SQLite DBs,
+    strictly ignoring simulated or soft-opc devices.
     """
-    if not os.path.exists(db_path):
-        return {}
-
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
-    cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
-    cur.execute("SELECT name, value FROM devices;")
-    rows = cur.fetchall()
-    conn.close()
-
     devices = {}
-    for d_name, d_val in rows:
-        if d_name in ("server", "0"):
+    for db_path in db_paths:
+        if not os.path.exists(db_path):
             continue
         try:
-            dev = json.loads(d_val)
-            dev_id = dev.get("id") or d_name
-            dev["id"] = dev_id
-            devices[dev_id] = dev
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+            cur.execute("SELECT name, value FROM devices;")
+            rows = cur.fetchall()
+            conn.close()
+
+            for d_name, d_val in rows:
+                if d_name in ("server", "0"):
+                    continue
+                try:
+                    dev = json.loads(d_val)
+                    if is_simulated_device(dev):
+                        continue
+                    dev_id = dev.get("id") or d_name
+                    dev["id"] = dev_id
+                    devices[dev_id] = dev
+                except Exception:
+                    continue
+            if devices:
+                break
         except Exception:
-            continue
+            pass
     return devices
 
 
@@ -265,14 +303,15 @@ def import_devices(
     Main execution engine:
     Extracts, deduplicates, merges, and writes devices to the target Storage Server.
     """
-    db_path, work_dir, storage_port = resolve_storage_db_path(plant_id)
+    db_paths, work_dir, storage_port = resolve_storage_db_paths(plant_id)
+    primary_db = db_paths[0]
 
     print("=" * 76)
     print(" FUXA ENTERPRISE - STORAGE SERVER DEVICE IMPORTER & DEDUPLICATOR")
     print("=" * 76)
     print(f"[*] Target Plant:          Plant {plant_id}")
     print(f"[*] Storage Port:          Port {storage_port}")
-    print(f"[*] Target Database:      {db_path}")
+    print(f"[*] Target Database:      {primary_db}")
     print(f"[*] Dry-run Mode:          {'ON (Preview Only)' if dry_run else 'OFF (Live Commit)'}")
     print(f"[*] Clean Mode:            {'ON (Replacing existing devices)' if clean_existing else 'OFF (Merging)'}")
     print(f"[*] Source Files:          {len(source_files)} file(s) provided")
@@ -283,7 +322,7 @@ def import_devices(
         canonical_devices = {}
         print(f"[*] Clean mode active: Starting with clean device catalog")
     else:
-        canonical_devices = load_existing_storage_devices(db_path)
+        canonical_devices = load_existing_storage_devices(db_paths)
         print(f"[*] Existing devices in Storage Server: {len(canonical_devices)}")
 
     # Index existing devices by normalized name and ID
@@ -419,41 +458,55 @@ def import_devices(
         print("\n[!] DRY RUN ACTIVE: Zero changes written to database.")
         return audit_report
 
-    # 4. Commit changes to target Storage Server database safely
-    if create_backup and os.path.exists(db_path):
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        bak_path = f"{db_path}.bak_{ts}"
-        shutil.copy2(db_path, bak_path)
-        print(f"[+] Created safety backup of Storage DB: {os.path.basename(bak_path)}")
+    # 4. Commit changes to target Storage Server database (both runtime _appdata and root)
+    for db_path in db_paths:
+        if create_backup and os.path.exists(db_path):
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            bak_path = f"{db_path}.bak_{ts}"
+            shutil.copy2(db_path, bak_path)
+            print(f"[+] Created safety backup of Storage DB: {os.path.basename(bak_path)}")
 
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
 
-    # Ensure required tables exist
-    cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
-    cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
-    cur.execute("CREATE TABLE IF NOT EXISTS devicesSecurity (name TEXT PRIMARY KEY, value TEXT);")
+        # Ensure required tables exist
+        cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
+        cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+        cur.execute("CREATE TABLE IF NOT EXISTS devicesSecurity (name TEXT PRIMARY KEY, value TEXT);")
 
-    # If clean mode active, purge previous non-server devices from database
-    if clean_existing:
-        print("[*] Clean mode: Purging previous non-server devices from database...")
-        cur.execute("DELETE FROM devices WHERE name != 'server' AND name != '0';")
-        cur.execute("DELETE FROM devicesSecurity WHERE name != 'server' AND name != '0';")
+        # Always purge legacy simulated devices permanently
+        cur.execute("SELECT name, value FROM devices;")
+        rows = cur.fetchall()
+        for d_id, d_val in rows:
+            if d_id in ("server", "0"):
+                continue
+            try:
+                d_obj = json.loads(d_val)
+                if is_simulated_device(d_obj):
+                    cur.execute("DELETE FROM devices WHERE name = ?;", (d_id,))
+            except Exception:
+                pass
 
-    # Ensure internal FUXA Server device is preserved
-    fuxa_server_dev = {"id": "0", "name": "FUXA Server", "type": "FuxaServer", "property": {}}
-    cur.execute("INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                ("server", json.dumps(fuxa_server_dev), "", "", ""))
+        # If clean mode active, purge previous non-server devices from database
+        if clean_existing:
+            print(f"[*] Clean mode: Purging previous non-server devices from {os.path.basename(db_path)}...")
+            cur.execute("DELETE FROM devices WHERE name != 'server' AND name != '0';")
+            cur.execute("DELETE FROM devicesSecurity WHERE name != 'server' AND name != '0';")
 
-    # Write each canonical device into the devices table
-    for dev_id, dev in canonical_devices.items():
-        dev_json = json.dumps(dev)
+        # Ensure internal FUXA Server device is preserved
+        fuxa_server_dev = {"id": "0", "name": "FUXA Server", "type": "FuxaServer", "property": {}}
         cur.execute("INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                    (dev_id, dev_json, "", "", ""))
+                    ("server", json.dumps(fuxa_server_dev), "", "", ""))
 
-    conn.commit()
-    conn.close()
-    print(f"[✓] Successfully committed {len(canonical_devices)} deduplicated devices to {db_path}!")
+        # Write each canonical device into the devices table
+        for dev_id, dev in canonical_devices.items():
+            dev_json = json.dumps(dev)
+            cur.execute("INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
+                        (dev_id, dev_json, "", "", ""))
+
+        conn.commit()
+        conn.close()
+        print(f"[✓] Successfully committed {len(canonical_devices)} devices to {db_path}!")
 
     # 4b. Optional Bulk Historical DAQ configuration
     if enable_history and not dry_run:
