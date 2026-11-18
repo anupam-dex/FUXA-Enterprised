@@ -1301,22 +1301,37 @@ async def api_set_instance_devices(instance_id: str, request: Request):
                 except Exception:
                     pass
 
-            # Inject / update selected storage devices
+            # Inject / update selected storage devices as strictly OPC-UA Client devices
+            # Functional Interlock 2: View Servers NEVER connect directly to PLCs
+            plant_endpoint = get_plant_opcua_endpoint(int(plant_id))
             for dev_id in device_ids:
                 s_dev = storage_by_id.get(dev_id) or storage_by_name.get(dev_id)
                 if not s_dev:
                     continue
                 clean_dev = strip_historical_daq_for_view(s_dev)
-                real_type = s_dev.get("type", "OPCUA")
-                clean_dev["type"] = real_type
-                clean_dev["property"] = dict(s_dev.get("property") or {})
+                clean_dev["type"] = "OPCUA"
+                clean_dev["connection"] = "opc-ua"
                 clean_dev["enabled"] = True
                 clean_dev["polling"] = 1000
-                dev_conn = s_dev.get("connection") or ("opc-ua" if real_type == "OPCUA" else real_type.lower())
+                clean_dev["influxdb_logging"] = False
+                clean_dev["property"] = {
+                    "address": plant_endpoint,
+                    "options": {
+                        "securityMode": "None",
+                        "securityPolicy": "None"
+                    }
+                }
+
+                clean_name = (s_dev.get("name") or dev_id).replace(" ", "_")
+                for tid, tinfo in clean_dev.get("tags", {}).items():
+                    if isinstance(tinfo, dict):
+                        tname = tinfo.get("name", tid)
+                        tinfo["address"] = f"ns=2;s=Plant_{plant_id}.{clean_name}.{tname}"
+                        tinfo["daq"] = {"enabled": False, "changed": False, "interval": 0, "restored": False}
 
                 cur.execute(
                     "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
-                    (clean_dev["id"], json.dumps(clean_dev), dev_conn, "", "")
+                    (clean_dev["id"], json.dumps(clean_dev), "opc-ua", "", "")
                 )
 
             conn.commit()
@@ -1791,6 +1806,26 @@ def api_connect_storage_device(req: ConnectDeviceRequest):
                 cur = conn.cursor()
                 from project_builder import strip_historical_daq_for_view
                 clean_device = strip_historical_daq_for_view(matched_device)
+                clean_device["type"] = "OPCUA"
+                clean_device["connection"] = "opc-ua"
+                plant_endpoint = get_plant_opcua_endpoint(int(plant_id))
+                clean_device["property"] = {
+                    "address": plant_endpoint,
+                    "options": {
+                        "securityMode": "None",
+                        "securityPolicy": "None"
+                    }
+                }
+                clean_device["enabled"] = True
+                clean_device["polling"] = 1000
+                clean_device["influxdb_logging"] = False
+                c_name = (matched_device.get("name") or req.device_key).replace(" ", "_")
+                for tid, tinfo in clean_device.get("tags", {}).items():
+                    if isinstance(tinfo, dict):
+                        tname = tinfo.get("name", tid)
+                        tinfo["address"] = f"ns=2;s=Plant_{plant_id}.{c_name}.{tname}"
+                        tinfo["daq"] = {"enabled": False, "changed": False, "interval": 0, "restored": False}
+
                 cur.execute(
                     "INSERT OR REPLACE INTO devices (name, value, connection, cntid, cntpwd) VALUES (?, ?, ?, ?, ?);",
                     (clean_device["id"], json.dumps(clean_device), "opc-ua", "", "")

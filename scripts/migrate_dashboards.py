@@ -208,22 +208,31 @@ def sync_matching_storage_devices_to_view(
             matched_s_dev = storage_by_sig[sig]
             match_reason = f"Hardware Signature match ({sig})"
 
+        clean_dev_name = (matched_s_dev.get("name") if matched_s_dev else dev_name).replace(" ", "_")
+
         if matched_s_dev:
-            # Prepare View Server device entry: Preserve REAL PLC protocol, address & options from Storage Server
+            # Strictly configure View Server device as an OPC-UA Client device to the Plant Hub
+            # Zero direct physical PLC connections are permitted on View Servers
             bridged_dev = strip_historical_daq_for_view(matched_s_dev)
-            real_type = matched_s_dev.get("type", "OPCUA")
-            bridged_dev["type"] = real_type
-            real_props = dict(matched_s_dev.get("property") or {})
-            bridged_dev["property"] = real_props
-            dev_conn = matched_s_dev.get("connection") or ("opc-ua" if real_type == "OPCUA" else real_type.lower())
+            bridged_dev["type"] = "OPCUA"
+            bridged_dev["connection"] = "opc-ua"
             bridged_dev["enabled"] = True
             bridged_dev["polling"] = 1000
             bridged_dev["influxdb_logging"] = False
+            bridged_dev["property"] = {
+                "address": plant_endpoint,
+                "options": {
+                    "securityMode": "None",
+                    "securityPolicy": "None"
+                }
+            }
 
-            # Strictly strip and disable any DAQ / historical logging on tags
+            # Map all tags to OPC-UA address space on Plant Hub and strictly disable DAQ
             tags = bridged_dev.get("tags") or {}
             for t_id, t_info in tags.items():
                 if isinstance(t_info, dict):
+                    t_name = t_info.get("name", t_id)
+                    t_info["address"] = f"ns=2;s=Plant_{plant_id}.{clean_dev_name}.{t_name}"
                     t_info["daq"] = {
                         "enabled": False,
                         "changed": False,
@@ -233,19 +242,48 @@ def sync_matching_storage_devices_to_view(
             bridged_dev["tags"] = tags
 
             tag_count = len(tags)
-            devices_to_inject.append((bridged_dev, dev_conn))
+            devices_to_inject.append((bridged_dev, "opc-ua"))
             report["matched_from_storage"].append({
                 "source_name": dev_name,
                 "storage_name": matched_s_dev.get("name"),
                 "tags_count": tag_count,
                 "reason": match_reason
             })
-            plc_addr = real_props.get("address") or real_props.get("endpoint") or "configured"
-            print(f"    ✓ Matched '{dev_name}' -> Imported from Storage Server as '{matched_s_dev.get('name')}' ({tag_count} tags, Protocol: {real_type}, Address: {plc_addr}, DAQ: disabled)")
+            print(f"    ✓ Matched '{dev_name}' -> Configured as OPC-UA Client Device ({tag_count} tags, Endpoint: {plant_endpoint}, DAQ: disabled)")
         else:
+            # Source device not yet in Central Storage: Convert directly to OPC-UA Client device so widgets work!
+            opcua_dev = {
+                "id": d_obj.get("id") or f"dev_opc_{name_norm or 'dev'}",
+                "name": dev_name,
+                "type": "OPCUA",
+                "connection": "opc-ua",
+                "enabled": True,
+                "polling": 1000,
+                "influxdb_logging": False,
+                "property": {
+                    "address": plant_endpoint,
+                    "options": {
+                        "securityMode": "None",
+                        "securityPolicy": "None"
+                    }
+                },
+                "tags": {}
+            }
+            src_tags = d_obj.get("tags") or {}
+            if isinstance(src_tags, list):
+                src_tags = {t.get("id") or f"t_{i}": t for i, t in enumerate(src_tags) if isinstance(t, dict)}
+            for st_id, st_info in src_tags.items():
+                if isinstance(st_info, dict):
+                    st_name = st_info.get("name", st_id)
+                    clean_t = dict(st_info)
+                    clean_t["address"] = f"ns=2;s=Plant_{plant_id}.{clean_dev_name}.{st_name}"
+                    clean_t["daq"] = {"enabled": False, "changed": False, "interval": 0, "restored": False}
+                    opcua_dev["tags"][st_id] = clean_t
+
+            tag_count = len(opcua_dev["tags"])
+            devices_to_inject.append((opcua_dev, "opc-ua"))
             report["missing_in_storage"].append(dev_name)
-            print(f"    ⚠️ Notice: Device '{dev_name}' ({dev_type}) is NOT yet configured in Plant {plant_id} Storage Server.")
-            print(f"       (Ignored direct PLC connection to protect View Server architecture. Import to Storage Server first to enable live telemetry).")
+            print(f"    ✓ Interlock Enforced: '{dev_name}' ({dev_type}) direct PLC connection stripped -> Auto-converted to OPC-UA Client device ({tag_count} tags)")
 
     if not dry_run and devices_to_inject:
         conn = sqlite3.connect(db_path)
@@ -397,6 +435,40 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
 
     # 1. Load source project
     src_project = load_source_project(source)
+
+    # Functional Interlock 1: If target is a Storage Server, redirect to device-only importer!
+    # Storage servers are strictly for connecting devices & enabling historical tags.
+    target_clean = str(target).strip().lower()
+    is_storage = "storage" in target_clean or (target_clean.isdigit() and 5000 <= int(target_clean) < 6000 and (int(target_clean) % 100 == 0 or target_clean == "5900"))
+    if is_storage:
+        print("[!] Functional Interlock 1 Active: Storage Servers are exclusively for device connectivity & DAQ.")
+        print("    Stripping all HMI views and routing physical devices into Central Storage...")
+        from import_devices_to_storage import import_devices
+        p_id = 9
+        if target_clean.isdigit() and 5000 <= int(target_clean) < 6000:
+            p_val = int(target_clean)
+            p_id = 9 if p_val == 5900 else (p_val - 5000) // 100
+        else:
+            import re
+            m = re.search(r"p(?:lant)?_?(\d+)", target_clean)
+            if m:
+                p_id = int(m.group(1))
+        rep = import_devices(
+            source_files=[src_project],
+            plant_id=p_id,
+            dry_run=dry_run,
+            create_backup=True,
+            restart_storage=not dry_run,
+            enable_history=True
+        )
+        return {
+            "success": True,
+            "interlock_enforced": True,
+            "interlock": "STORAGE_SERVER_ONLY_DEVICES",
+            "message": f"Storage Server Functional Interlock: Plant {p_id} Central Storage Server is strictly dedicated to connecting field devices and enabling historical InfluxDB tags. All views, HMI screens, and layouts were automatically and safely stripped, and physical devices and tags were imported into Central Storage.",
+            "report": rep
+        }
+
     src_hmi = src_project.get("hmi", {})
     src_views = src_hmi.get("views", [])
 
@@ -495,10 +567,42 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
             except Exception:
                 pass
 
+    # Functional Interlock 4: Avoid duplicate views in View Server
+    cur.execute("SELECT name, value FROM views;")
+    existing_views = {}
+    existing_name_to_id = {}
+    for r_name, r_val in cur.fetchall():
+        try:
+            v_data = json.loads(r_val)
+            existing_views[r_name] = v_data
+            norm_vname = normalize_string(v_data.get("name") or "")
+            if norm_vname:
+                existing_name_to_id[norm_vname] = r_name
+        except Exception:
+            pass
+
     for v in remapped_views:
-        v_id = v.get("id")
-        cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (v_id, json.dumps(v)))
-        print(f"    ✓ Imported view: {v.get('name')} ({v_id})")
+        v_id = v.get("id") or f"view_{normalize_string(v.get('name') or 'page')}"
+        v_name = v.get("name", "Unnamed")
+        norm_vname = normalize_string(v_name)
+
+        target_v_id = v_id
+        if v_id in existing_views:
+            target_v_id = v_id
+            print(f"    ✓ Replaced existing view by ID: {v_name} ({target_v_id})")
+        elif norm_vname and norm_vname in existing_name_to_id:
+            target_v_id = existing_name_to_id[norm_vname]
+            v["id"] = target_v_id
+            print(f"    ✓ Reconciled duplicate view name: '{v_name}' mapped to existing view ID ({target_v_id})")
+        else:
+            target_v_id = v_id
+            print(f"    ✓ Imported new unique view: {v_name} ({target_v_id})")
+
+        v["id"] = target_v_id
+        cur.execute("INSERT OR REPLACE INTO views (name, value) VALUES (?, ?);", (target_v_id, json.dumps(v)))
+        existing_views[target_v_id] = v
+        if norm_vname:
+            existing_name_to_id[norm_vname] = target_v_id
 
     # 5. Import non-device resources (texts, charts)
     if "texts" in src_project and isinstance(src_project["texts"], dict):
@@ -548,28 +652,38 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
     if "type" not in nav:
         nav["type"] = src_layout.get("navigation", {}).get("type", "inline")
 
-    # Merge navigation items
+    # Merge navigation items - strictly avoid duplicate views or duplicate labels
     src_nav_items = src_layout.get("navigation", {}).get("items", [])
     merged_items = []
-    seen_view_ids = set()
+    seen_nav_ids = set()
+    seen_nav_labels = set()
 
     for it in src_nav_items:
         if isinstance(it, dict) and it.get("view") in imported_view_ids:
-            merged_items.append(it)
-            seen_view_ids.add(it["view"])
+            vid = it.get("view")
+            vlabel = normalize_string(it.get("text") or "")
+            if vid not in seen_nav_ids and (not vlabel or vlabel not in seen_nav_labels):
+                merged_items.append(it)
+                seen_nav_ids.add(vid)
+                if vlabel:
+                    seen_nav_labels.add(vlabel)
 
     colors = ["#1e293b", "#0f172a", "#1e1b4b", "#172554", "#064e3b"]
     for idx, v in enumerate(remapped_views):
         v_id = v.get("id")
-        if v_id and v_id not in seen_view_ids:
+        v_label = v.get("name", f"Page {idx+1}")
+        norm_label = normalize_string(v_label)
+        if v_id and v_id not in seen_nav_ids and (not norm_label or norm_label not in seen_nav_labels):
             merged_items.append({
                 "view": v_id,
-                "text": v.get("name", f"Page {idx+1}"),
+                "text": v_label,
                 "icon": "dashboard",
                 "bkcolor": colors[idx % len(colors)],
                 "fgcolor": "#ffffff"
             })
-            seen_view_ids.add(v_id)
+            seen_nav_ids.add(v_id)
+            if norm_label:
+                seen_nav_labels.add(norm_label)
 
     nav["items"] = merged_items
     layout["navigation"] = nav

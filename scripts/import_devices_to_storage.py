@@ -325,12 +325,16 @@ def import_devices(
         canonical_devices = load_existing_storage_devices(db_paths)
         print(f"[*] Existing devices in Storage Server: {len(canonical_devices)}")
 
-    # Index existing devices by normalized name and ID
+    # Index existing devices by normalized name, ID, and hardware signature
     name_to_id = {}
+    sig_to_id = {}
     for d_id, dev in canonical_devices.items():
         name_norm = normalize_string(dev.get("name") or "")
         if name_norm:
             name_to_id[name_norm] = d_id
+        sig = compute_device_signature(dev)
+        if sig and not sig.endswith("://"):
+            sig_to_id[sig] = d_id
 
     # 2. Process all incoming project files
     audit_report = {
@@ -367,7 +371,7 @@ def import_devices(
             sig = compute_device_signature(dev)
             name_norm = normalize_string(dev_name)
 
-            # Check for match in canonical devices (Deduplicate strictly by Name or ID)
+            # Check for match in canonical devices (Deduplicate strictly by Name, ID, or Hardware Signature)
             matched_id = None
             match_reason = None
 
@@ -381,6 +385,9 @@ def import_devices(
                 if not name_norm or not existing_name_norm or name_norm == existing_name_norm:
                     matched_id = dev["id"]
                     match_reason = f"Direct Device ID match ('{dev['id']}')"
+            elif sig and sig in sig_to_id:
+                matched_id = sig_to_id[sig]
+                match_reason = f"Hardware Signature match ({sig})"
 
             if matched_id:
                 # Duplicate Device: Merge tags into the existing canonical device
@@ -469,10 +476,12 @@ def import_devices(
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
 
-        # Ensure required tables exist
+        # Ensure required tables exist & enforce strictly ZERO views on Storage Servers
         cur.execute("CREATE TABLE IF NOT EXISTS general (name TEXT PRIMARY KEY, value TEXT);")
         cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
         cur.execute("CREATE TABLE IF NOT EXISTS devicesSecurity (name TEXT PRIMARY KEY, value TEXT);")
+        cur.execute("CREATE TABLE IF NOT EXISTS views (name TEXT PRIMARY KEY, value TEXT);")
+        cur.execute("DELETE FROM views;")  # Functional Interlock 1: Storage servers are strictly for devices/DAQ, never views
 
         # Always purge legacy simulated devices permanently
         cur.execute("SELECT name, value FROM devices;")
