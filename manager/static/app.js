@@ -298,7 +298,7 @@ function updatePortPreview() {
 
     const defaultSub = `/p${plant}/div${div}/l${line}`;
     const subInput = document.getElementById('input-subpath');
-    if (subInput && (!subInput.value || subInput.value.startsWith('/p'))) {
+    if (subInput && !subInput.dataset.userEdited) {
         subInput.value = defaultSub;
     }
     document.getElementById('subpath-preview').textContent = subInput ? subInput.value : defaultSub;

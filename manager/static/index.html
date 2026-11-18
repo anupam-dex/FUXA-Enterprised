@@ -168,7 +168,7 @@
 
                     <div class="form-group">
                         <label for="input-subpath">Custom OT URL / Subpath (Port 80)</label>
-                        <input type="text" id="input-subpath" placeholder="e.g. /p9/ps/ems" value="/p9/div6/l1" style="font-family: monospace;">
+                        <input type="text" id="input-subpath" placeholder="e.g. /p9/ps/ems" value="/p9/div6/l1" style="font-family: monospace;" oninput="this.dataset.userEdited = 'true'; document.getElementById('subpath-preview').textContent = this.value || '/';">
                     </div>
 
                     <div class="form-group">
