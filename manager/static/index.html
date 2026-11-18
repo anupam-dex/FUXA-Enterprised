@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FUXA Fleet Manager | SCADA Orchestrator</title>
-    <link rel="stylesheet" href="/static/styles.css?v=6">
+    <link rel="stylesheet" href="/static/styles.css?v=7">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -866,8 +866,8 @@
     </div>
 
     <!-- Master Plant & Topology Manager Modal -->
-    <div id="plant-topology-modal" class="modal">
-        <div class="modal-content" style="max-width: 860px; max-height: 92vh; display: flex; flex-direction: column;">
+    <div id="plant-topology-modal" class="modal-backdrop">
+        <div class="modal-box" style="width: 860px; max-width: 95vw; max-height: 92vh; display: flex; flex-direction: column;">
             <div class="modal-header">
                 <div>
                     <h2>⚙️ Plant & Topology Master Manager</h2>
@@ -875,7 +875,7 @@
                         Configure plant names, dedicated storage ports, divisions/locations, and SCADA tree hierarchy.
                     </p>
                 </div>
-                <button class="close-btn" onclick="closePlantTopologyManagerModal()">&times;</button>
+                <button class="btn-close" onclick="closePlantTopologyManagerModal()">&times;</button>
             </div>
 
             <!-- Tab Navigation Bar -->
@@ -1014,6 +1014,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=17"></script>
+    <script src="/static/app.js?v=18"></script>
 </body>
 </html>

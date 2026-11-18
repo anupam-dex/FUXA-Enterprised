@@ -684,7 +684,7 @@ body {
 }
 
 /* Modals */
-.modal-backdrop {
+.modal-backdrop, .modal {
     display: none;
     position: fixed;
     top: 0;
@@ -698,11 +698,11 @@ body {
     justify-content: center;
 }
 
-.modal-backdrop.show {
+.modal-backdrop.show, .modal.show {
     display: flex;
 }
 
-.modal-box {
+.modal-box, .modal-content {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 12px;
@@ -719,12 +719,17 @@ body {
     border-bottom: 1px solid var(--border-color);
 }
 
-.btn-close {
+.btn-close, .close-btn {
     background: transparent;
     border: none;
     color: var(--text-muted);
     font-size: 1.5rem;
     cursor: pointer;
+    line-height: 1;
+}
+
+.btn-close:hover, .close-btn:hover {
+    color: #f8fafc;
 }
 
 .modal-body {
