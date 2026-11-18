@@ -2007,6 +2007,315 @@ async function submitVsDevices() {
     }
 }
 
+// ==============================================================================
+// Plant & Topology Master Manager
+// ==============================================================================
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function openPlantTopologyManagerModal(tab = 'plants') {
+    const modal = document.getElementById('plant-topology-modal');
+    if (!modal) return;
+    modal.classList.add('show');
+    switchTopologyTab(tab);
+    loadPlantsAndDivisionsManager();
+}
+
+function closePlantTopologyManagerModal() {
+    const modal = document.getElementById('plant-topology-modal');
+    if (modal) modal.classList.remove('show');
+    const alertEl = document.getElementById('topo-manager-alert');
+    if (alertEl) alertEl.style.display = 'none';
+}
+
+function switchTopologyTab(tabName) {
+    const tabs = ['plants', 'divisions', 'device-tree'];
+    tabs.forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        const pane = document.getElementById(`tab-pane-${t}`);
+        if (btn) btn.classList.toggle('active', t === tabName);
+        if (pane) {
+            pane.classList.toggle('active', t === tabName);
+            pane.style.display = (t === tabName) ? 'block' : 'none';
+        }
+    });
+}
+
+async function loadPlantsAndDivisionsManager() {
+    try {
+        const resp = await fetch('/api/topology/config');
+        if (!resp.ok) throw new Error('Failed to load topology configuration');
+        const data = await resp.json();
+        renderPlantsManagerTable(data.plants || {});
+        renderDivisionsManagerTable(data.divisions || {});
+    } catch (err) {
+        showTopologyAlert('Error loading topology: ' + err.message, true);
+    }
+}
+
+function renderPlantsManagerTable(plants) {
+    const tbody = document.getElementById('plants-manager-tbody');
+    if (!tbody) return;
+    const entries = Object.entries(plants).sort((a, b) => parseInt(a[0], 10) - parseInt(b[0], 10));
+    if (entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="padding: 24px; text-align: center; color: #94a3b8;">No plants configured.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = entries.map(([pId, pInfo]) => {
+        const pName = (pInfo && pInfo.name) ? pInfo.name : `Plant ${pId}`;
+        const pPort = pInfo.storage_port || (pId === '9' ? 5900 : 5000 + parseInt(pId, 10) * 100);
+        return `
+            <tr style="border-bottom: 1px solid #1e293b;">
+                <td style="padding: 10px 12px; text-align: center; font-family: var(--font-mono); font-weight: 700; color: #38bdf8;">
+                    ${pId}
+                </td>
+                <td style="padding: 10px 12px;">
+                    <input type="text" id="plant-name-${pId}" value="${escapeHtml(pName)}" style="width: 100%; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                </td>
+                <td style="padding: 10px 12px;">
+                    <div style="display: flex; align-items: center; gap: 6px;">
+                        <input type="number" id="plant-port-${pId}" value="${pPort}" style="width: 80px; background: #0f172a; border: 1px solid #334155; color: #f97316; font-weight: 600; padding: 6px 8px; border-radius: 6px; font-size: 0.82rem; font-family: var(--font-mono);">
+                        <a href="/p${pId}/storage/" target="_blank" title="Open Storage Dashboard" style="color: #f97316; font-size: 0.85rem; text-decoration: none;">↗</a>
+                    </div>
+                </td>
+                <td style="padding: 10px 12px; text-align: right; white-space: nowrap;">
+                    <button class="btn btn-sm btn-primary" onclick="submitSavePlant(${pId})" style="padding: 4px 10px; font-size: 0.76rem; font-weight: 600; margin-right: 6px;">
+                        💾 Save
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="submitDeletePlant(${pId})" style="padding: 4px 8px; font-size: 0.76rem;">
+                        🗑️
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderDivisionsManagerTable(divisions) {
+    const tbody = document.getElementById('divisions-manager-tbody');
+    if (!tbody) return;
+    const entries = Object.entries(divisions).sort((a, b) => parseInt(a[0], 10) - parseInt(b[0], 10));
+    if (entries.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="padding: 24px; text-align: center; color: #94a3b8;">No divisions configured.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = entries.map(([dId, dName]) => {
+        return `
+            <tr style="border-bottom: 1px solid #1e293b;">
+                <td style="padding: 10px 12px; text-align: center; font-family: var(--font-mono); font-weight: 700; color: #a855f7;">
+                    ${dId}
+                </td>
+                <td style="padding: 10px 12px;">
+                    <input type="text" id="div-name-${dId}" value="${escapeHtml(dName)}" style="width: 100%; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                </td>
+                <td style="padding: 10px 12px; color: #94a3b8; font-size: 0.78rem; font-family: var(--font-mono);">
+                    Port: P<span style="color: #38bdf8;">${dId}</span>L0
+                </td>
+                <td style="padding: 10px 12px; text-align: right; white-space: nowrap;">
+                    <button class="btn btn-sm btn-primary" onclick="submitSaveDivision(${dId})" style="padding: 4px 10px; font-size: 0.76rem; font-weight: 600; margin-right: 6px;">
+                        💾 Save
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="submitDeleteDivision(${dId})" style="padding: 4px 8px; font-size: 0.76rem;">
+                        🗑️
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function autoSuggestStoragePort(val) {
+    const pId = parseInt(val, 10);
+    const portInput = document.getElementById('new-plant-port');
+    if (!portInput || isNaN(pId)) return;
+    portInput.value = pId === 9 ? 5900 : 5000 + pId * 100;
+}
+
+function showTopologyAlert(msg, isError = false) {
+    const el = document.getElementById('topo-manager-alert');
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.background = isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)';
+    el.style.border = isError ? '1px solid #ef4444' : '1px solid #10b981';
+    el.style.color = isError ? '#fca5a5' : '#a7f3d0';
+    el.textContent = msg;
+    setTimeout(() => {
+        if (el) el.style.display = 'none';
+    }, 4000);
+}
+
+async function submitSavePlant(plantId) {
+    const nameInput = document.getElementById(`plant-name-${plantId}`);
+    const portInput = document.getElementById(`plant-port-${plantId}`);
+    const name = nameInput ? nameInput.value.trim() : '';
+    const port = portInput ? parseInt(portInput.value, 10) : null;
+
+    if (!name) {
+        showTopologyAlert('Plant name cannot be empty', true);
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/topology/save-plant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plant_id: plantId, name, storage_port: port })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to save plant');
+        showTopologyAlert(data.message || `Plant ${plantId} updated!`, false);
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
+async function submitAddNewPlant() {
+    const idInput = document.getElementById('new-plant-id');
+    const nameInput = document.getElementById('new-plant-name');
+    const portInput = document.getElementById('new-plant-port');
+
+    const plantId = parseInt(idInput?.value, 10);
+    const name = nameInput?.value.trim() || '';
+    const port = parseInt(portInput?.value, 10) || null;
+
+    if (isNaN(plantId) || plantId < 1) {
+        showTopologyAlert('Please enter a valid Plant ID (number)', true);
+        return;
+    }
+    if (!name) {
+        showTopologyAlert('Please enter a Plant Name', true);
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/topology/save-plant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plant_id: plantId, name, storage_port: port })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to add plant');
+        showTopologyAlert(data.message || `Plant ${plantId} created successfully!`, false);
+        if (nameInput) nameInput.value = '';
+        if (idInput) {
+            idInput.value = plantId + 1;
+            autoSuggestStoragePort(plantId + 1);
+        }
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
+async function submitDeletePlant(plantId) {
+    if (!confirm(`Are you sure you want to delete Plant ${plantId}?`)) return;
+
+    try {
+        const resp = await fetch('/api/topology/delete-plant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plant_id: plantId })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to delete plant');
+        showTopologyAlert(data.message || `Plant ${plantId} deleted`, false);
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
+async function submitSaveDivision(divId) {
+    const nameInput = document.getElementById(`div-name-${divId}`);
+    const name = nameInput ? nameInput.value.trim() : '';
+
+    if (!name) {
+        showTopologyAlert('Division name cannot be empty', true);
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/topology/save-division', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ division_id: divId, name })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to save division');
+        showTopologyAlert(data.message || `Division ${divId} updated!`, false);
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
+async function submitAddNewDivision() {
+    const idInput = document.getElementById('new-div-id');
+    const nameInput = document.getElementById('new-div-name');
+
+    const divId = parseInt(idInput?.value, 10);
+    const name = nameInput?.value.trim() || '';
+
+    if (isNaN(divId) || divId < 1 || divId > 9) {
+        showTopologyAlert('Please enter a valid Division ID between 1 and 9', true);
+        return;
+    }
+    if (!name) {
+        showTopologyAlert('Please enter a Division Name', true);
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/topology/save-division', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ division_id: divId, name })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to add division');
+        showTopologyAlert(data.message || `Division ${divId} created successfully!`, false);
+        if (nameInput) nameInput.value = '';
+        if (idInput) idInput.value = (divId % 9) + 1;
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
+async function submitDeleteDivision(divId) {
+    if (!confirm(`Are you sure you want to delete Division ${divId}?`)) return;
+
+    try {
+        const resp = await fetch('/api/topology/delete-division', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ division_id: divId })
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to delete division');
+        showTopologyAlert(data.message || `Division ${divId} deleted`, false);
+        loadPlantsAndDivisionsManager();
+        loadMatrix();
+    } catch (err) {
+        showTopologyAlert(err.message, true);
+    }
+}
+
 // Auto-Refresh
 loadMatrix();
 setInterval(loadMatrix, 5000);

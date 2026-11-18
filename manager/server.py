@@ -302,6 +302,129 @@ class CreateProjectRequest(BaseModel):
     custom_subpath: str = None
     custom_port: int = None
 
+class SavePlantRequest(BaseModel):
+    plant_id: int
+    name: str
+    storage_port: int = None
+
+class DeletePlantRequest(BaseModel):
+    plant_id: int
+    force: bool = False
+
+class SaveDivisionRequest(BaseModel):
+    division_id: int
+    name: str
+
+class DeleteDivisionRequest(BaseModel):
+    division_id: int
+
+@app.get("/api/topology/config")
+def get_topology_config():
+    return {
+        "plants": port_engine.registry.get("plants", {}),
+        "divisions": port_engine.registry.get("divisions", {})
+    }
+
+@app.post("/api/topology/save-plant")
+def save_plant(req: SavePlantRequest):
+    p_id = str(req.plant_id)
+    plants = port_engine.registry.setdefault("plants", {})
+    
+    # Calculate or validate storage port
+    storage_port = req.storage_port
+    if not storage_port or storage_port < 1024:
+        storage_port = 5900 if p_id == "9" else 5000 + req.plant_id * 100
+        
+    # Update plant metadata
+    plants[p_id] = {
+        "name": req.name.strip(),
+        "storage_port": storage_port
+    }
+    
+    port_engine._save_registry()
+    logger.info(f"[TOPOLOGY] Saved Plant {p_id}: '{req.name.strip()}' (Storage Port: {storage_port})")
+    
+    # Provision / update storage server instance
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{p_id}_{storage_port}")
+    os.makedirs(storage_work_dir, exist_ok=True)
+    os.makedirs(os.path.join(storage_work_dir, "_appdata"), exist_ok=True)
+    
+    db_path = os.path.join(storage_work_dir, "project.fuxap.db")
+    appdata_db = os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
+    storage_name = f"Plant {p_id} Storage Master"
+    
+    if not os.path.exists(db_path):
+        generate_fuxa_database(
+            target_dir=storage_work_dir,
+            plant_id=req.plant_id,
+            division_name=f"Central Storage Master (Plant {p_id})",
+            line_name="PLC Collector & InfluxDB Storage",
+            project_name=storage_name,
+            opcua_endpoint=get_plant_opcua_endpoint(req.plant_id),
+            base_dir=BASE_DIR
+        )
+    update_project_name_in_db(db_path, storage_name)
+    if os.path.exists(appdata_db):
+        update_project_name_in_db(appdata_db, storage_name)
+        
+    # Auto-launch storage server if not currently running
+    if not port_engine.is_port_in_use(storage_port):
+        logger.info(f"Hosting Central Storage Server for Plant {p_id} on Port {storage_port}...")
+        _launch_fuxa_instance(f"storage_p{p_id}", storage_port, storage_work_dir, f"/p{p_id}/storage")
+        
+    return {
+        "success": True,
+        "message": f"Plant {p_id} ('{req.name.strip()}') saved successfully.",
+        "plants": plants
+    }
+
+@app.post("/api/topology/delete-plant")
+def delete_plant(req: DeletePlantRequest):
+    p_id = str(req.plant_id)
+    plants = port_engine.registry.get("plants", {})
+    if p_id not in plants:
+        raise HTTPException(status_code=404, detail=f"Plant {p_id} not found in registry.")
+        
+    # Check if any View Server instances belong to this plant
+    instances = port_engine.get_all_instances()
+    plant_views = [i for i in instances.values() if str(i.get("plant")) == p_id]
+    if plant_views and not req.force:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete Plant {p_id}: {len(plant_views)} active view servers belong to this plant. Delete or reassign them first."
+        )
+        
+    p_name = plants[p_id].get("name", f"Plant {p_id}")
+    del plants[p_id]
+    port_engine._save_registry()
+    logger.info(f"[TOPOLOGY] Deleted Plant {p_id}: '{p_name}'")
+    return {"success": True, "message": f"Plant {p_id} ('{p_name}') deleted."}
+
+@app.post("/api/topology/save-division")
+def save_division(req: SaveDivisionRequest):
+    d_id = str(req.division_id)
+    divisions = port_engine.registry.setdefault("divisions", {})
+    divisions[d_id] = req.name.strip()
+    port_engine._save_registry()
+    logger.info(f"[TOPOLOGY] Saved Division {d_id}: '{req.name.strip()}'")
+    return {
+        "success": True,
+        "message": f"Division {d_id} ('{req.name.strip()}') saved successfully.",
+        "divisions": divisions
+    }
+
+@app.post("/api/topology/delete-division")
+def delete_division(req: DeleteDivisionRequest):
+    d_id = str(req.division_id)
+    divisions = port_engine.registry.get("divisions", {})
+    if d_id not in divisions:
+        raise HTTPException(status_code=404, detail=f"Division {d_id} not found in registry.")
+    d_name = divisions[d_id]
+    del divisions[d_id]
+    port_engine._save_registry()
+    logger.info(f"[TOPOLOGY] Deleted Division {d_id}: '{d_name}'")
+    return {"success": True, "message": f"Division {d_id} ('{d_name}') deleted."}
+
 class UpdateSubpathRequest(BaseModel):
     port: int
     subpath: str

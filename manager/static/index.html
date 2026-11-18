@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FUXA Fleet Manager | SCADA Orchestrator</title>
-    <link rel="stylesheet" href="/static/styles.css?v=5">
+    <link rel="stylesheet" href="/static/styles.css?v=6">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -43,6 +43,9 @@
                     <span>⚙️ Tools</span> <span style="font-size: 0.72rem; margin-left: 2px;">▾</span>
                 </button>
                 <div class="dropdown-menu">
+                    <button class="dropdown-item" onclick="openPlantTopologyManagerModal()">
+                        <span style="font-size: 1rem;">🏭</span> Manage Plants & Topology
+                    </button>
                     <button class="dropdown-item" onclick="openDeviceTopologyModal()">
                         <span style="font-size: 1rem;">📍</span> Group Devices & Sub-Locations
                     </button>
@@ -136,7 +139,12 @@
         <!-- 2. Compact Plant Topology Strip (Interactive Selector) -->
         <section>
             <div class="plants-section-header">
-                <h2>Plant Topology Nodes</h2>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <h2>Plant Topology Nodes</h2>
+                    <button class="btn btn-sm btn-secondary" onclick="openPlantTopologyManagerModal()" style="border-color: #3b82f6; color: #60a5fa; background: rgba(59, 130, 246, 0.12); font-weight: 600; padding: 3px 10px; font-size: 0.78rem;">
+                        <span>⚙️ Manage Plants</span>
+                    </button>
+                </div>
                 <span style="font-size: 0.8rem; color: var(--text-muted);">Click a plant to filter deployed view servers</span>
             </div>
             <div id="plant-strip" class="plant-strip-grid">
@@ -857,6 +865,155 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=15"></script>
+    <!-- Master Plant & Topology Manager Modal -->
+    <div id="plant-topology-modal" class="modal">
+        <div class="modal-content" style="max-width: 860px; max-height: 92vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <div>
+                    <h2>⚙️ Plant & Topology Master Manager</h2>
+                    <p class="subtitle" style="font-size: 0.8rem; color: #94a3b8; margin-top: 2px;">
+                        Configure plant names, dedicated storage ports, divisions/locations, and SCADA tree hierarchy.
+                    </p>
+                </div>
+                <button class="close-btn" onclick="closePlantTopologyManagerModal()">&times;</button>
+            </div>
+
+            <!-- Tab Navigation Bar -->
+            <div class="topology-tabs-bar">
+                <button class="topotab-btn active" id="tab-btn-plants" onclick="switchTopologyTab('plants')">
+                    <span>🏭 Plants & Storage Hubs</span>
+                </button>
+                <button class="topotab-btn" id="tab-btn-divisions" onclick="switchTopologyTab('divisions')">
+                    <span>🏢 Divisions & Locations</span>
+                </button>
+                <button class="topotab-btn" id="tab-btn-device-tree" onclick="switchTopologyTab('device-tree')">
+                    <span>🌳 SCADA Device Grouping</span>
+                </button>
+            </div>
+
+            <div class="modal-body" style="padding: 16px 20px; overflow-y: auto; flex: 1;">
+                <!-- Tab 1: Plants & Storage Ports -->
+                <div id="tab-pane-plants" class="topotab-pane active">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="font-size: 0.85rem; font-weight: 700; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.5px;">
+                            Configured Plants & Storage Master Endpoints
+                        </div>
+                        <span style="font-size: 0.76rem; color: #94a3b8;">Changes apply immediately & persist in registry</span>
+                    </div>
+
+                    <div style="border: 1px solid #334155; border-radius: 8px; overflow: hidden; background: #0b1120; margin-bottom: 16px;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left;">
+                            <thead style="background: #1e293b; color: #cbd5e1;">
+                                <tr>
+                                    <th style="padding: 8px 12px; width: 60px; text-align: center;">ID</th>
+                                    <th style="padding: 8px 12px;">Plant Name</th>
+                                    <th style="padding: 8px 12px; width: 140px;">Storage Port</th>
+                                    <th style="padding: 8px 12px; width: 100px; text-align: center;">Status</th>
+                                    <th style="padding: 8px 12px; width: 130px; text-align: right;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="plants-manager-tbody">
+                                <tr><td colspan="5" style="padding: 24px; text-align: center; color: #94a3b8;">Loading plants...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add New Plant Card -->
+                    <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <span>+</span> Add New Plant
+                        </div>
+                        <div style="display: grid; grid-template-columns: 80px 1fr 140px auto; gap: 10px; align-items: center;">
+                            <div>
+                                <label style="font-size: 0.72rem; color: #94a3b8; display: block; margin-bottom: 4px;">Plant ID</label>
+                                <input type="number" id="new-plant-id" min="1" max="99" value="5" oninput="autoSuggestStoragePort(this.value)" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 8px; border-radius: 6px; font-size: 0.82rem;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.72rem; color: #94a3b8; display: block; margin-bottom: 4px;">Plant Name</label>
+                                <input type="text" id="new-plant-name" placeholder="e.g. Plant 5 - EV & Battery Pack" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.72rem; color: #94a3b8; display: block; margin-bottom: 4px;">Storage Port</label>
+                                <input type="number" id="new-plant-port" value="5500" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 8px; border-radius: 6px; font-size: 0.82rem; font-family: var(--font-mono);">
+                            </div>
+                            <div style="padding-top: 18px;">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="submitAddNewPlant()" style="font-weight: 700; font-size: 0.82rem; padding: 7px 14px;">
+                                    + Create Plant
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Divisions & Locations -->
+                <div id="tab-pane-divisions" class="topotab-pane" style="display: none;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="font-size: 0.85rem; font-weight: 700; color: #e2e8f0; text-transform: uppercase; letter-spacing: 0.5px;">
+                            Divisions & Physical Functional Areas
+                        </div>
+                        <span style="font-size: 0.76rem; color: #94a3b8;">Division ID forms the 2nd digit in auto-assigned ports</span>
+                    </div>
+
+                    <div style="border: 1px solid #334155; border-radius: 8px; overflow: hidden; background: #0b1120; margin-bottom: 16px;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left;">
+                            <thead style="background: #1e293b; color: #cbd5e1;">
+                                <tr>
+                                    <th style="padding: 8px 12px; width: 70px; text-align: center;">Div ID</th>
+                                    <th style="padding: 8px 12px;">Division Name</th>
+                                    <th style="padding: 8px 12px; width: 180px;">Port Formula Preview</th>
+                                    <th style="padding: 8px 12px; width: 130px; text-align: right;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="divisions-manager-tbody">
+                                <tr><td colspan="4" style="padding: 24px; text-align: center; color: #94a3b8;">Loading divisions...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add New Division Card -->
+                    <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid #334155; border-radius: 8px; padding: 14px 16px;">
+                        <div style="font-size: 0.82rem; font-weight: 700; color: #38bdf8; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+                            <span>+</span> Add New Division / Location
+                        </div>
+                        <div style="display: grid; grid-template-columns: 90px 1fr auto; gap: 10px; align-items: center;">
+                            <div>
+                                <label style="font-size: 0.72rem; color: #94a3b8; display: block; margin-bottom: 4px;">Div ID (1-9)</label>
+                                <input type="number" id="new-div-id" min="1" max="9" value="9" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 8px; border-radius: 6px; font-size: 0.82rem;">
+                            </div>
+                            <div>
+                                <label style="font-size: 0.72rem; color: #94a3b8; display: block; margin-bottom: 4px;">Division / Location Name</label>
+                                <input type="text" id="new-div-name" placeholder="e.g. Battery Cell Manufacturing" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                            </div>
+                            <div style="padding-top: 18px;">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="submitAddNewDivision()" style="font-weight: 700; font-size: 0.82rem; padding: 7px 14px;">
+                                    + Add Division
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Embedded Device Grouping -->
+                <div id="tab-pane-device-tree" class="topotab-pane" style="display: none;">
+                    <div style="text-align: center; padding: 24px; color: #94a3b8;">
+                        <p style="margin-bottom: 14px; font-size: 0.9rem;">
+                            Manage device grouping into Sub-Locations & Lines across your Plant Storage servers.
+                        </p>
+                        <button class="btn btn-primary" onclick="closePlantTopologyManagerModal(); openDeviceTopologyModal();" style="font-weight: 700;">
+                            🌳 Open Full SCADA Device Tree Manager
+                        </button>
+                    </div>
+                </div>
+
+                <div id="topo-manager-alert" style="display: none; margin-top: 12px; border-radius: 6px; padding: 10px 14px; font-size: 0.82rem;"></div>
+            </div>
+
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="closePlantTopologyManagerModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=17"></script>
 </body>
 </html>
