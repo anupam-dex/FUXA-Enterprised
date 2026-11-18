@@ -74,12 +74,10 @@ done
 # Force kill any lingering processes on all SCADA ports (80, 9000, 4845, SoftOPC 4850-4854, Storage 5x00, View 96xx)
 echo "Notice: Ensuring all SCADA ports (80, 9000, 4845, 4850-4854, 5100-5900, 9610-9630) are clean..."
 fuser -k 80/tcp 9000/tcp 4845/tcp 4850/tcp 4851/tcp 4852/tcp 4853/tcp 4854/tcp 5100/tcp 5200/tcp 5300/tcp 5400/tcp 5900/tcp 9610/tcp 9611/tcp 9620/tcp 9621/tcp 9630/tcp 2>/dev/null || true
-sudo fuser -k 80/tcp 9000/tcp 4845/tcp 4850/tcp 4851/tcp 4852/tcp 4853/tcp 4854/tcp 5100/tcp 5200/tcp 5300/tcp 5400/tcp 5900/tcp 9610/tcp 9611/tcp 9620/tcp 9621/tcp 9630/tcp 2>/dev/null || true
-pkill -9 -f "uvicorn" 2>/dev/null || true
-pkill -9 -f "opcua_bridge.py" 2>/dev/null || true
-pkill -9 -f "gateway.js" 2>/dev/null || true
-pkill -9 -f "server/main.js" 2>/dev/null || true
-pkill -9 -f "FUXA" 2>/dev/null || true
+pkill -9 -f "uvicorn.*server:app" 2>/dev/null || true
+pkill -9 -f "bridge/opcua_bridge.py" 2>/dev/null || true
+pkill -9 -f "gateway/gateway.js" 2>/dev/null || true
+pkill -9 -f "fuxa/server/main.js" 2>/dev/null || true
 sleep 1
 
 mkdir -p "$SCRIPT_DIR/instances" 2>/dev/null || true
@@ -99,11 +97,14 @@ if [ ! -d "$SCRIPT_DIR/fuxa/server/node_modules/node-opcua" ]; then
     npm install node-opcua@^2.149.0 --no-audit --no-fund --omit=dev || true
     cd "$SCRIPT_DIR"
 fi
-ORIG_USER=$(stat -c '%u:%g' "$SCRIPT_DIR" 2>/dev/null || echo "1000:1000")
-chown -R "$ORIG_USER" "$SCRIPT_DIR/fuxa/server/node_modules" 2>/dev/null || true
-chmod -R 777 "$SCRIPT_DIR/fuxa/server/node_modules" 2>/dev/null || true
-chown -R "$ORIG_USER" "$SCRIPT_DIR/venv" 2>/dev/null || true
-chmod -R 777 "$SCRIPT_DIR/venv" 2>/dev/null || true
+if [ ! -f "$SCRIPT_DIR/venv/.perms_set" ]; then
+    ORIG_USER=$(stat -c '%u:%g' "$SCRIPT_DIR" 2>/dev/null || echo "1000:1000")
+    chown -R "$ORIG_USER" "$SCRIPT_DIR/fuxa/server/node_modules" 2>/dev/null || true
+    chmod -R 777 "$SCRIPT_DIR/fuxa/server/node_modules" 2>/dev/null || true
+    chown -R "$ORIG_USER" "$SCRIPT_DIR/venv" 2>/dev/null || true
+    chmod -R 777 "$SCRIPT_DIR/venv" 2>/dev/null || true
+    touch "$SCRIPT_DIR/venv/.perms_set" 2>/dev/null || true
+fi
 
 echo "=========================================================================="
 echo " 1. Starting FUXA Central Storage OPC-UA Bridge..."
