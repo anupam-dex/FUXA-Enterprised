@@ -2650,7 +2650,15 @@
             const header = card.querySelector('.device-header');
             const devName = header ? header.textContent.trim() : '';
             const devObj = (storageTopologyData && storageTopologyData.devices)
-                ? storageTopologyData.devices.find(d => d.name === devName || (d.property && d.property.address === devName))
+                ? storageTopologyData.devices.find(d => {
+                    if (!d) return false;
+                    const dName = (d.name || '').trim().toLowerCase();
+                    const dId = (d.id || '').trim().toLowerCase();
+                    const hName = devName.toLowerCase();
+                    const dAddr = (d.property && d.property.address ? d.property.address : '').trim().toLowerCase();
+                    return dName === hName || dId === hName || dAddr === hName ||
+                           dName.replace(/[^a-z0-9]/g, '') === hName.replace(/[^a-z0-9]/g, '');
+                })
                 : null;
             const info = getDeviceSubLocationInfo(devName, devObj);
             card.dataset.sublocId = info.id;
@@ -2840,7 +2848,15 @@
                     const cardHeader = card.querySelector('.device-header');
                     const cDevName = cardHeader ? cardHeader.textContent.trim() : '';
                     const cDevObj = (storageTopologyData && storageTopologyData.devices)
-                        ? storageTopologyData.devices.find(d => d.name === cDevName || d.id === cDevName || (d.property && d.property.address === cDevName))
+                        ? storageTopologyData.devices.find(d => {
+                            if (!d) return false;
+                            const dName = (d.name || '').trim().toLowerCase();
+                            const dId = (d.id || '').trim().toLowerCase();
+                            const hName = cDevName.toLowerCase();
+                            const dAddr = (d.property && d.property.address ? d.property.address : '').trim().toLowerCase();
+                            return dName === hName || dId === hName || dAddr === hName ||
+                                   dName.replace(/[^a-z0-9]/g, '') === hName.replace(/[^a-z0-9]/g, '');
+                        })
                         : null;
                     const cSubdiv = (cDevObj && (cDevObj.subdivision || (cDevObj.property && cDevObj.property.subdivision))) || card.dataset.subdivision || '';
                     let sBadge = card.querySelector('.fuxa-card-subdiv-badge');

@@ -1038,14 +1038,132 @@ def sync_all_tags():
 
 @app.get("/api/storage-devices")
 @app.get("/api/storage/devices")
-def api_get_storage_devices(plant: int = 9):
+@app.get("/api/storage/{plant_id}/devices")
+def api_get_storage_devices(plant_id: int = 9, plant: int = None):
     """Returns available devices and tags connected to InfluxDB on Central Storage for the given plant"""
-    catalog = get_storage_devices_catalog(plant, base_dir=BASE_DIR)
+    p_id = plant if plant is not None else plant_id
+    catalog = get_storage_devices_catalog(int(p_id), base_dir=BASE_DIR)
     return {
         "success": True,
-        "plant": plant,
+        "plant": int(p_id),
         "count": len(catalog),
         "devices": catalog
+    }
+
+@app.post("/api/storage/{plant_id}/update-device-topology")
+async def api_update_device_topology(plant_id: int, request: Request):
+    """
+    Updates the topological grouping (Location, Sub-Division, Division)
+    for devices in Plant Storage Server database.
+    Rearranges the device tree in FUXA Connections view.
+    """
+    body = await request.json()
+    plant_id = int(plant_id)
+    storage_port = 5000 + plant_id * 100 if plant_id != 9 else 5900
+    storage_work_dir = os.path.join(INSTANCES_DIR, f"storage_plant_{plant_id}_{storage_port}")
+
+    db_paths = [
+        os.path.join(storage_work_dir, "project.fuxap.db"),
+        os.path.join(storage_work_dir, "_appdata", "project.fuxap.db")
+    ]
+
+    device_map = {}
+    if "updates" in body and isinstance(body["updates"], list):
+        for u in body["updates"]:
+            if isinstance(u, dict) and "id" in u:
+                device_map[u["id"]] = {
+                    "location": str(u.get("location", "")).strip(),
+                    "subdivision": str(u.get("subdivision", "Line 1")).strip(),
+                    "division": int(u.get("division", 6))
+                }
+    elif "device_ids" in body and isinstance(body["device_ids"], list):
+        loc = str(body.get("location", "")).strip()
+        subdiv = str(body.get("subdivision", "Line 1")).strip()
+        div = int(body.get("division", 6))
+        for dev_id in body["device_ids"]:
+            device_map[dev_id] = {
+                "location": loc,
+                "subdivision": subdiv,
+                "division": div
+            }
+
+    if not device_map:
+        raise HTTPException(status_code=400, detail="No device topology updates provided.")
+
+    updated_count = 0
+    for db_path in db_paths:
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            cur.execute("CREATE TABLE IF NOT EXISTS devices (name TEXT PRIMARY KEY, value TEXT, connection TEXT, cntid TEXT, cntpwd TEXT);")
+            cur.execute("SELECT name, value FROM devices;")
+            rows = cur.fetchall()
+
+            for d_name, d_val in rows:
+                if d_name in ("server", "0"):
+                    continue
+                try:
+                    dev = json.loads(d_val)
+                    d_id = dev.get("id") or d_name
+                    target_info = device_map.get(d_id) or device_map.get(d_name) or device_map.get(dev.get("name"))
+                    if target_info:
+                        loc = target_info["location"]
+                        subdiv = target_info["subdivision"]
+                        div_id = target_info["division"]
+
+                        dev["location"] = loc
+                        dev["subdivision"] = subdiv
+                        if "property" not in dev or not isinstance(dev["property"], dict):
+                            dev["property"] = {}
+                        dev["property"]["location"] = loc
+                        dev["property"]["subdivision"] = subdiv
+
+                        if "topology" not in dev or not isinstance(dev["topology"], dict):
+                            dev["topology"] = {}
+                        dev["topology"]["plant"] = plant_id
+                        dev["topology"]["division"] = div_id
+                        dev["topology"]["division_name"] = loc
+                        dev["topology"]["location"] = loc
+                        dev["topology"]["subdivision"] = subdiv
+                        dev["topology"]["line_name"] = subdiv
+
+                        cur.execute("UPDATE devices SET value = ? WHERE name = ?;", (json.dumps(dev), d_name))
+                        updated_count += 1
+                except Exception:
+                    pass
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error updating device topology in {db_path}: {e}")
+
+    # Hot-reload storage server instance so FUXA applies new tree structure
+    storage_inst_id = f"storage_p{plant_id}"
+    try:
+        if storage_inst_id in running_processes:
+            try:
+                running_processes[storage_inst_id].terminate()
+                running_processes[storage_inst_id].wait(timeout=2)
+            except Exception:
+                pass
+        for p in psutil.process_iter(['pid', 'name']):
+            try:
+                for c in p.net_connections():
+                    if c.laddr.port == storage_port:
+                        p.kill()
+            except Exception:
+                pass
+        time.sleep(0.5)
+        _launch_fuxa_instance(storage_inst_id, storage_port, storage_work_dir, f"/p{plant_id}/storage")
+    except Exception as e:
+        logger.warning(f"Storage master hot-reload notice: {e}")
+
+    return {
+        "success": True,
+        "updated_devices": len(device_map),
+        "message": f"Successfully updated grouping for {len(device_map)} devices! FUXA Storage Server tree rearranged."
     }
 
 class ConnectDeviceRequest(BaseModel):

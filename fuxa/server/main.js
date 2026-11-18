@@ -959,8 +959,12 @@ function startFuxa() {
                     if (req.method === 'OPTIONS') return res.sendStatus(204);
 
                     const plantId = getDeducePlantId();
-                    const dbFile = path.join(settings.workDir, 'project.fuxap.db');
-                    if (!fs.existsSync(dbFile)) {
+                    const candidateDbs = [
+                        path.join(settings.workDir, '_appdata', 'project.fuxap.db'),
+                        path.join(settings.workDir, 'project.fuxap.db')
+                    ];
+                    const dbFile = candidateDbs.find(p => fs.existsSync(p));
+                    if (!dbFile) {
                         return res.json({ plant_id: plantId, plant_name: PLANTS_MAP[plantId] || `Plant ${plantId}`, divisions: DIVISIONS_MAP, devices: [] });
                     }
 
@@ -1121,16 +1125,22 @@ function startFuxa() {
                     const { id } = req.body || {};
                     if (!id) return res.status(400).json({ error: 'Device id is required' });
 
-                    const dbFile = path.join(settings.workDir, 'project.fuxap.db');
+                    const candidateDbs = [
+                        path.join(settings.workDir, '_appdata', 'project.fuxap.db'),
+                        path.join(settings.workDir, 'project.fuxap.db')
+                    ];
                     try {
                         const sqlite3 = require('sqlite3').verbose();
-                        const db = new sqlite3.Database(dbFile);
-                        db.run("DELETE FROM devices WHERE name = ?;", [id], function (err) {
-                            db.close();
-                            if (err) return res.status(500).json({ error: err.message });
-                            logger.info(`[STORAGE-TOPOLOGY] Deleted field device: ${id}`);
-                            return res.json({ success: true, id: id });
-                        });
+                        for (const dbFile of candidateDbs) {
+                            if (fs.existsSync(dbFile)) {
+                                const db = new sqlite3.Database(dbFile);
+                                db.run("DELETE FROM devices WHERE name = ? OR name = ?;", [id, id], function (err) {
+                                    db.close();
+                                });
+                            }
+                        }
+                        logger.info(`[STORAGE-TOPOLOGY] Deleted field device: ${id}`);
+                        return res.json({ success: true, id: id });
                     } catch (e) {
                         return res.status(500).json({ error: e.message });
                     }

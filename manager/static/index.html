@@ -40,6 +40,7 @@
             </div>
             <button class="btn btn-secondary" onclick="openBackupModal()" title="1-Click Disaster Recovery & Fleet Snapshots" style="border-color: #38bdf8; color: #38bdf8; background: rgba(56, 189, 248, 0.1);">📦 Backup & Snapshots</button>
             <button class="btn btn-secondary" onclick="openMigrateModal()" title="1-Click Import / Migrate project.json or .fuxap dashboards" style="border-color: #f59e0b; color: #fbbf24; background: rgba(245, 158, 11, 0.12); font-weight: 600;">📥 Import Project (.json / .fuxap)</button>
+            <button class="btn btn-secondary" onclick="openDeviceTopologyModal()" title="Group devices into Plant Sub-Locations & Lines" style="border-color: #3b82f6; color: #60a5fa; background: rgba(59, 130, 246, 0.12); font-weight: 600;">📍 Group Devices</button>
             <button class="btn btn-secondary" onclick="syncAllTags()" title="Sync storage server tags to all View servers">🔄 Sync All Tags</button>
             <button class="btn btn-primary" onclick="openCreateModal()">+ Create New Project</button>
         </div>
@@ -659,6 +660,99 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=10"></script>
+    <!-- 6. Device Topology & Sub-Location Grouping Modal -->
+    <div id="device-topology-modal" class="modal-backdrop">
+        <div class="modal-content" style="max-width: 960px; width: 95%;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.3rem;">📍</span>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.15rem; color: #f8fafc;">Device Grouping & Sub-Location Topology</h3>
+                        <div style="font-size: 0.78rem; color: var(--text-muted);">Assign physical devices to plant sub-locations (e.g. Decoater, Engine Assembly, Utilities) so they group into tree branches in Central Storage</div>
+                    </div>
+                </div>
+                <button class="btn-close" onclick="closeDeviceTopologyModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 16px 20px;">
+                <!-- Storage Server Selector -->
+                <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 12px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: #cbd5e1; min-width: 140px;">Target Storage Server:</label>
+                    <select id="topo-storage-plant" class="form-control" onchange="loadStorageTopologyDevices()" style="flex: 1; background: #0f172a; border: 1px solid #334155; color: #f8fafc; padding: 7px 10px; border-radius: 6px; font-size: 0.85rem;">
+                        <option value="9">Plant 9 Central Storage Master (Port 5900)</option>
+                        <option value="1">Plant 1 Storage Master (Port 5100)</option>
+                        <option value="2">Plant 2 Storage Master (Port 5200)</option>
+                        <option value="3">Plant 3 Storage Master (Port 5300)</option>
+                        <option value="4">Plant 4 Storage Master (Port 5400)</option>
+                    </select>
+                    <button class="btn btn-sm btn-secondary" onclick="loadStorageTopologyDevices()" style="font-size: 0.8rem;">🔄 Reload</button>
+                </div>
+
+                <!-- Bulk Toolbar -->
+                <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px;">
+                    <div style="font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px;">
+                        ⚡ Bulk Assign Selected Devices:
+                    </div>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <select id="topo-bulk-preset" class="form-control" onchange="handleTopologyPresetChange()" style="flex: 1; min-width: 180px; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                            <option value="">-- Choose Sub-Location Preset --</option>
+                            <option value="Paintshop (Div 6)" data-div="6">🏭 Paintshop (Div 6)</option>
+                            <option value="Engine Assembly (Div 3)" data-div="3">🔩 Engine Assembly (Div 3)</option>
+                            <option value="Utilities & Energy (Div 5)" data-div="5">🔧 Utilities & Energy (Div 5)</option>
+                            <option value="Body Shop (Div 1)" data-div="1">🚗 Body Shop (Div 1)</option>
+                            <option value="Stamping (Div 2)" data-div="2">🔨 Stamping (Div 2)</option>
+                            <option value="Quality & Inspection (Div 4)" data-div="4">🔬 Quality & Inspection (Div 4)</option>
+                            <option value="Robotics & Automation (Div 7)" data-div="7">🤖 Robotics & Automation (Div 7)</option>
+                            <option value="Material Handling (Div 8)" data-div="8">📦 Material Handling (Div 8)</option>
+                            <option value="__custom__">✏️ Custom Sub-Location...</option>
+                        </select>
+
+                        <input type="text" id="topo-bulk-location" class="form-control" placeholder="Sub-Location Name (e.g. Decoater Station)" style="flex: 1; min-width: 180px; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+                        <input type="text" id="topo-bulk-subdiv" class="form-control" placeholder="Line / Station (e.g. Line 1)" value="Line 1" style="width: 130px; background: #0f172a; border: 1px solid #475569; color: #f8fafc; padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
+
+                        <button type="button" class="btn btn-sm btn-primary" onclick="applyBulkTopology()" style="font-weight: 700; font-size: 0.82rem; background: #2563eb; border-color: #3b82f6;">
+                            Apply to Selected (<span id="topo-selected-count">0</span>)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Devices Table -->
+                <div style="max-height: 380px; overflow-y: auto; border: 1px solid #334155; border-radius: 6px; background: #0b1120;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem; text-align: left;">
+                        <thead style="position: sticky; top: 0; background: #1e293b; color: #cbd5e1; z-index: 10;">
+                            <tr>
+                                <th style="padding: 8px 12px; width: 36px; text-align: center;">
+                                    <input type="checkbox" id="topo-select-all" onchange="toggleSelectAllTopoDevices(event)" style="cursor: pointer;">
+                                </th>
+                                <th style="padding: 8px 12px;">Device Name</th>
+                                <th style="padding: 8px 12px; width: 100px;">Protocol</th>
+                                <th style="padding: 8px 12px;">Endpoint / Address</th>
+                                <th style="padding: 8px 12px; width: 60px; text-align: center;">Tags</th>
+                                <th style="padding: 8px 12px; width: 220px;">Assigned Sub-Location</th>
+                                <th style="padding: 8px 12px; width: 120px;">Line / Station</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topo-devices-tbody">
+                            <tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">Loading storage devices...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="topo-results-box" style="display: none; margin-top: 10px; border-radius: 6px; padding: 10px 14px; font-size: 0.82rem;"></div>
+            </div>
+            <div class="modal-footer" style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center;">
+                <button class="btn btn-secondary" onclick="closeDeviceTopologyModal()">Cancel</button>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <a id="btn-view-storage-tree" href="http://localhost:5900/p9/storage/device" target="_blank" class="btn btn-secondary" style="font-size: 0.8rem; border-color: #38bdf8; color: #38bdf8;">
+                        🌐 View Storage Tree (Port 5900)
+                    </a>
+                    <button id="btn-save-topology" class="btn btn-primary" onclick="saveDeviceTopology()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); border-color: #3b82f6; font-weight: 700;">
+                        💾 Save & Rearrange Tree
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js?v=11"></script>
 </body>
 </html>

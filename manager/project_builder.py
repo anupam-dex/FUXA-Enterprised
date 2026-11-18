@@ -158,17 +158,25 @@ def get_storage_devices_catalog(plant_id: int, base_dir: str = None, opcua_endpo
                             dev_prop = dev.get("property") or {}
                             endpoint = dev_prop.get("address") or opcua_endpoint
 
+                            dev_loc = dev.get("location") or dev_prop.get("location") or dev.get("topology", {}).get("location") or ""
+                            dev_subdiv = dev.get("subdivision") or dev_prop.get("subdivision") or dev.get("topology", {}).get("subdivision") or ""
+
                             devices.append({
                                 "device_key": dev_name.replace(" ", "_"),
                                 "id": dev.get("id") or d_name,
                                 "name": dev_name,
-                                "division": dev.get("topology", {}).get("division_name") or "Central Storage",
+                                "location": dev_loc,
+                                "subdivision": dev_subdiv,
+                                "division": dev.get("topology", {}).get("division_name") or dev_loc or "Central Storage",
                                 "type": dev.get("type", "OPCUA"),
                                 "enabled": dev.get("enabled", True),
                                 "polling": dev.get("polling", 1000),
                                 "influxdb_logging": True,
+                                "address": endpoint,
                                 "property": {
                                     "address": endpoint,
+                                    "location": dev_loc,
+                                    "subdivision": dev_subdiv,
                                     "options": dev_prop.get("options", {
                                         "securityMode": "None",
                                         "securityPolicy": "None"

@@ -1373,6 +1373,242 @@ async function submitBulkHistory() {
     }
 }
 
+// ==============================================================================
+// 7. Device Topology & Sub-Location Grouping Engine
+// ==============================================================================
+let topoDevicesList = [];
+let selectedTopoDeviceIds = new Set();
+
+function openDeviceTopologyModal() {
+    const modal = document.getElementById('device-topology-modal');
+    if (!modal) return;
+    modal.classList.add('show');
+    loadStorageTopologyDevices();
+}
+
+function closeDeviceTopologyModal() {
+    const modal = document.getElementById('device-topology-modal');
+    if (modal) modal.classList.remove('show');
+}
+
+function handleTopologyPresetChange() {
+    const preset = document.getElementById('topo-bulk-preset')?.value || '';
+    const locInput = document.getElementById('topo-bulk-location');
+    if (!locInput) return;
+    if (preset && preset !== '__custom__') {
+        locInput.value = preset;
+    } else if (preset === '__custom__') {
+        locInput.value = '';
+        locInput.focus();
+    }
+}
+
+async function loadStorageTopologyDevices() {
+    const plantId = document.getElementById('topo-storage-plant')?.value || '9';
+    const tbody = document.getElementById('topo-devices-tbody');
+    const linkBtn = document.getElementById('btn-view-storage-tree');
+    const resBox = document.getElementById('topo-results-box');
+    if (resBox) resBox.style.display = 'none';
+
+    const storagePort = (plantId === '9') ? 5900 : 5000 + parseInt(plantId, 10) * 100;
+    if (linkBtn) {
+        linkBtn.href = `http://${window.location.hostname || 'localhost'}:${storagePort}/p${plantId}/storage/device`;
+        linkBtn.textContent = `🌐 View Storage Tree (Port ${storagePort})`;
+    }
+
+    if (tbody) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">⏳ Loading devices from Plant ' + plantId + ' Storage...</td></tr>';
+    }
+
+    try {
+        const resp = await fetch(`/api/storage/${plantId}/devices`);
+        const data = await resp.json();
+        topoDevicesList = data.devices || [];
+        selectedTopoDeviceIds.clear();
+        renderTopoDevicesTable();
+    } catch (err) {
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="7" style="padding: 24px; text-align: center; color: #f87171;">❌ Failed to load devices: ${err.message}</td></tr>`;
+        }
+    }
+}
+
+function renderTopoDevicesTable() {
+    const tbody = document.getElementById('topo-devices-tbody');
+    const selCount = document.getElementById('topo-selected-count');
+    const selectAll = document.getElementById('topo-select-all');
+
+    if (selCount) selCount.textContent = selectedTopoDeviceIds.size;
+    if (selectAll) {
+        selectAll.checked = (topoDevicesList.length > 0 && selectedTopoDeviceIds.size === topoDevicesList.length);
+    }
+
+    if (!tbody) return;
+    if (topoDevicesList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="padding: 24px; text-align: center; color: #94a3b8;">No devices configured in this Storage Server yet.</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = topoDevicesList.map((dev) => {
+        const isChecked = selectedTopoDeviceIds.has(dev.id);
+        const loc = dev.location || '';
+        const subdiv = dev.subdivision || 'Line 1';
+        const addr = dev.address || (dev.property && dev.property.address) || '—';
+        const type = dev.type || 'Unknown';
+        const tagCount = dev.tag_count || (dev.tags ? Object.keys(dev.tags).length : 0);
+
+        return `
+            <tr style="border-bottom: 1px solid #1e293b; background: ${isChecked ? 'rgba(37,99,235,0.08)' : 'transparent'};">
+                <td style="padding: 8px 12px; text-align: center;">
+                    <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleTopoDeviceSelect('${dev.id}', this.checked)" style="cursor: pointer;">
+                </td>
+                <td style="padding: 8px 12px; font-weight: 600; color: #f8fafc;">
+                    ${dev.name || dev.id}
+                </td>
+                <td style="padding: 8px 12px;">
+                    <span style="background: rgba(148, 163, 184, 0.12); color: #cbd5e1; padding: 2px 6px; border-radius: 4px; font-size: 0.72rem; font-family: monospace;">
+                        ${type}
+                    </span>
+                </td>
+                <td style="padding: 8px 12px; color: #94a3b8; font-size: 0.75rem; font-family: monospace; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${addr}">
+                    ${addr}
+                </td>
+                <td style="padding: 8px 12px; text-align: center; color: #38bdf8; font-weight: 700;">
+                    ${tagCount}
+                </td>
+                <td style="padding: 6px 12px;">
+                    <input type="text" value="${loc}" placeholder="e.g. Decoater Station"
+                           onchange="updateInlineTopoDevice('${dev.id}', 'location', this.value)"
+                           style="width: 100%; background: #020617; border: 1px solid #334155; color: #60a5fa; padding: 5px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600;">
+                </td>
+                <td style="padding: 6px 12px;">
+                    <input type="text" value="${subdiv}" placeholder="Line 1"
+                           onchange="updateInlineTopoDevice('${dev.id}', 'subdivision', this.value)"
+                           style="width: 100%; background: #020617; border: 1px solid #334155; color: #cbd5e1; padding: 5px 8px; border-radius: 4px; font-size: 0.8rem;">
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function toggleTopoDeviceSelect(devId, isChecked) {
+    if (isChecked) {
+        selectedTopoDeviceIds.add(devId);
+    } else {
+        selectedTopoDeviceIds.delete(devId);
+    }
+    renderTopoDevicesTable();
+}
+
+function toggleSelectAllTopoDevices(event) {
+    const isChecked = event.target.checked;
+    if (isChecked) {
+        topoDevicesList.forEach(d => selectedTopoDeviceIds.add(d.id));
+    } else {
+        selectedTopoDeviceIds.clear();
+    }
+    renderTopoDevicesTable();
+}
+
+function updateInlineTopoDevice(devId, field, value) {
+    const dev = topoDevicesList.find(d => d.id === devId);
+    if (dev) {
+        dev[field] = value.trim();
+    }
+}
+
+function applyBulkTopology() {
+    const loc = (document.getElementById('topo-bulk-location')?.value || '').trim();
+    const subdiv = (document.getElementById('topo-bulk-subdiv')?.value || 'Line 1').trim();
+
+    if (!loc) {
+        alert('Please enter or select a Sub-Location name to assign.');
+        return;
+    }
+    if (selectedTopoDeviceIds.size === 0) {
+        alert('Please select at least one device from the table.');
+        return;
+    }
+
+    const presetSelect = document.getElementById('topo-bulk-preset');
+    const selectedOption = presetSelect?.selectedOptions[0];
+    const divId = parseInt(selectedOption?.dataset?.div || '6', 10);
+
+    topoDevicesList.forEach(dev => {
+        if (selectedTopoDeviceIds.has(dev.id)) {
+            dev.location = loc;
+            dev.subdivision = subdiv;
+            dev.division = divId;
+        }
+    });
+
+    renderTopoDevicesTable();
+}
+
+async function saveDeviceTopology() {
+    const plantId = document.getElementById('topo-storage-plant')?.value || '9';
+    const btn = document.getElementById('btn-save-topology');
+    const resBox = document.getElementById('topo-results-box');
+
+    if (!btn || topoDevicesList.length === 0) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Saving & Restarting Storage Server...';
+    if (resBox) {
+        resBox.style.display = 'block';
+        resBox.style.background = '#0f172a';
+        resBox.style.border = '1px solid #334155';
+        resBox.style.color = '#94a3b8';
+        resBox.innerHTML = 'Updating device topology in SQLite and applying tree layout...';
+    }
+
+    const updates = topoDevicesList.map(d => ({
+        id: d.id,
+        location: d.location || '',
+        subdivision: d.subdivision || 'Line 1',
+        division: d.division || 6
+    }));
+
+    try {
+        const resp = await fetch(`/api/storage/${plantId}/update-device-topology`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ updates: updates })
+        });
+        const data = await resp.json();
+
+        if (resp.ok && data.success) {
+            const storagePort = (plantId === '9') ? 5900 : 5000 + parseInt(plantId, 10) * 100;
+            if (resBox) {
+                resBox.style.background = '#064e3b';
+                resBox.style.border = '1px solid #10b981';
+                resBox.style.color = '#a7f3d0';
+                resBox.innerHTML = `
+                    <div style="font-weight: 700; margin-bottom: 4px;">🎉 Device Grouping Saved Successfully!</div>
+                    <div>${data.message || `Updated ${updates.length} devices.`}</div>
+                    <div style="margin-top: 6px;">
+                        <a href="http://${window.location.hostname || 'localhost'}:${storagePort}/p${plantId}/storage/device" target="_blank" style="color: #67e8f9; font-weight: 700; text-decoration: underline;">
+                            👉 Open Central Storage Tree (Port ${storagePort}) to view the live rearranged branches!
+                        </a>
+                    </div>
+                `;
+            }
+        } else {
+            throw new Error(data.detail || data.error || 'Failed to update topology');
+        }
+    } catch (err) {
+        if (resBox) {
+            resBox.style.background = 'rgba(239, 68, 68, 0.15)';
+            resBox.style.border = '1px solid #ef4444';
+            resBox.style.color = '#fca5a5';
+            resBox.innerHTML = `❌ Error: ${err.message}`;
+        }
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '💾 Save & Rearrange Tree';
+    }
+}
+
 // Auto-Refresh
 loadMatrix();
 setInterval(loadMatrix, 5000);
