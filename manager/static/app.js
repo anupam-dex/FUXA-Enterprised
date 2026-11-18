@@ -221,7 +221,7 @@ function renderInstancesList() {
                     <button onclick="triggerInstanceSelfHeal('${inst.id}')" class="btn btn-primary btn-sm" style="background: #10b981; border-color: #059669;" title="Auto-Heal & Launch Server">▶ Heal & Start</button>
                     <button onclick="openDiagnosticsModal('${inst.id}')" class="btn btn-secondary btn-sm" style="color: #38bdf8;" title="View Exact Fault Diagnostics">🩺 Diag</button>
                 `}
-                <button onclick="openMigrateModal('${inst.id}')" class="btn btn-secondary btn-sm" title="Import Dashboards (.json/.fuxap) into this View Server" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">📥 Import</button>
+                <button onclick="openMigrateModal('${inst.id}', 'view')" class="btn btn-secondary btn-sm" title="Import Dashboards (.json/.fuxap) into this View Server" style="color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);">📥 Import</button>
                 <button onclick="syncTags('${inst.id}')" class="btn btn-secondary btn-sm" title="Sync Plant Storage Tags into this View Server">🔄 Sync Tags</button>
                 <button onclick="editInstance('${inst.id}')" class="btn btn-secondary btn-sm" title="Edit View Server">✏️ Edit</button>
                 <button onclick="viewLogs('${inst.id}')" class="btn btn-secondary btn-sm" title="View Logs">Logs</button>
@@ -751,15 +751,14 @@ function setMigrateDestination(dest) {
 }
 
 function openStorageImportModal(plantId) {
-    openMigrateModal();
-    setMigrateDestination('storage');
+    openMigrateModal(null, 'storage');
     const plantSel = document.getElementById('migrate-storage-plant');
     if (plantSel) {
         plantSel.value = String(plantId);
     }
 }
 
-function openMigrateModal(preselectedInstanceId = null) {
+function openMigrateModal(preselectedInstanceId = null, defaultDestination = null) {
     const modal = document.getElementById('migrate-modal');
     if (!modal) return;
 
@@ -795,7 +794,10 @@ function openMigrateModal(preselectedInstanceId = null) {
         resBox.style.display = 'none';
         resBox.innerHTML = '';
     }
-    setMigrateDestination('storage');
+
+    // When an instanceId is passed or opening from view server, ALWAYS default destination to 'view'
+    const targetDest = defaultDestination || (preselectedInstanceId ? 'view' : 'view');
+    setMigrateDestination(targetDest);
     setMigrateSourceMode('file');
     setupDropzone();
     modal.classList.add('show');
@@ -1612,3 +1614,15 @@ async function saveDeviceTopology() {
 // Auto-Refresh
 loadMatrix();
 setInterval(loadMatrix, 5000);
+
+// URL Query Parameter Handlers (e.g. ?action=import&target=9621)
+window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('action') === 'import' || params.get('import')) {
+        const target = params.get('target') || params.get('port');
+        const dest = params.get('dest') || 'view';
+        setTimeout(() => {
+            openMigrateModal(target, dest);
+        }, 350);
+    }
+});
