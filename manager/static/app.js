@@ -1059,7 +1059,13 @@ async function executeProjectMigration() {
                 body: formData
             });
 
-            const data = await resp.json();
+            const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
             if (!resp.ok) {
                 throw new Error(data.detail || 'Device import failed');
             }
@@ -1152,7 +1158,13 @@ async function executeProjectMigration() {
             body: formData
         });
 
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) {
             throw new Error(data.detail || 'Migration request failed');
         }
@@ -1394,7 +1406,13 @@ function copyDiagnosticLogs() {
 async function copyInstanceApiKey(instanceId) {
     try {
         const resp = await fetch(`/api/instances/${instanceId}/apikeys`);
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         const key = data.primary_api_key || data.secret_code || 'fuxa-secret-jwt-key';
         await navigator.clipboard.writeText(key);
         alert(`🔑 API Key Copied to Clipboard!\n\nKey: ${key}\nInstance: ${instanceId}`);
@@ -1467,7 +1485,13 @@ async function submitBulkHistory() {
             })
         });
 
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (resBox) {
             resBox.style.display = 'block';
             if (data.success && data.report) {
@@ -1563,7 +1587,13 @@ async function loadStorageTopologyDevices() {
 
     try {
         const resp = await fetch(`/api/storage/${plantId}/devices`);
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         topoDevicesList = data.devices || [];
         selectedTopoDeviceIds.clear();
 
@@ -1718,7 +1748,13 @@ async function deleteStorageDevice(devId, devName) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ device_id: devId })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (resp.ok && data.success) {
             loadStorageTopologyDevices();
         } else {
@@ -1747,7 +1783,13 @@ async function purgeSimulatedStorageDevices() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (resp.ok && data.success) {
             if (resBox) {
                 resBox.style.background = '#064e3b';
@@ -1875,7 +1917,13 @@ async function openVsDevicesModal(instanceId) {
 
     try {
         const resp = await fetch(`/api/instances/${instanceId}/devices`);
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (resp.ok && data.success) {
             vsAvailableStorageDevices = data.storage_devices || [];
             vsSelectedDeviceIds = new Set((data.configured_devices || []).map(d => d.id));
@@ -1976,7 +2024,13 @@ async function submitVsDevices() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ device_ids: Array.from(vsSelectedDeviceIds) })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
 
         if (resp.ok && data.success) {
             if (resBox) {
@@ -2052,7 +2106,13 @@ async function loadPlantsAndDivisionsManager() {
     try {
         const resp = await fetch('/api/topology/config');
         if (!resp.ok) throw new Error('Failed to load topology configuration');
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         renderPlantsManagerTable(data.plants || {});
         renderDivisionsManagerTable(data.divisions || {});
     } catch (err) {
@@ -2170,7 +2230,13 @@ async function submitSavePlant(plantId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plant_id: plantId, name, storage_port: port })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to save plant');
         showTopologyAlert(data.message || `Plant ${plantId} updated!`, false);
         loadPlantsAndDivisionsManager();
@@ -2204,7 +2270,13 @@ async function submitAddNewPlant() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plant_id: plantId, name, storage_port: port })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to add plant');
         showTopologyAlert(data.message || `Plant ${plantId} created successfully!`, false);
         if (nameInput) nameInput.value = '';
@@ -2228,7 +2300,13 @@ async function submitDeletePlant(plantId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plant_id: plantId })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to delete plant');
         showTopologyAlert(data.message || `Plant ${plantId} deleted`, false);
         loadPlantsAndDivisionsManager();
@@ -2253,7 +2331,13 @@ async function submitSaveDivision(divId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ division_id: divId, name })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to save division');
         showTopologyAlert(data.message || `Division ${divId} updated!`, false);
         loadPlantsAndDivisionsManager();
@@ -2285,7 +2369,13 @@ async function submitAddNewDivision() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ division_id: divId, name })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to add division');
         showTopologyAlert(data.message || `Division ${divId} created successfully!`, false);
         if (nameInput) nameInput.value = '';
@@ -2306,7 +2396,13 @@ async function submitDeleteDivision(divId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ division_id: divId })
         });
-        const data = await resp.json();
+        const text = await resp.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            data = { success: resp.ok, message: text };
+        }
         if (!resp.ok) throw new Error(data.detail || data.message || 'Failed to delete division');
         showTopologyAlert(data.message || `Division ${divId} deleted`, false);
         loadPlantsAndDivisionsManager();
