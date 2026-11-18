@@ -410,6 +410,7 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
 
     # 2. Resolve target DB, plant & sync matched devices from Storage Server
     db_path, inst_id, port, plant_id = get_target_db_path(target)
+    work_dir = os.path.dirname(os.path.abspath(db_path))
     print(f"[+] Target View Server: {inst_id} (Port {port}, Plant {plant_id})")
     print(f"[+] Target Database:    {db_path}")
 
