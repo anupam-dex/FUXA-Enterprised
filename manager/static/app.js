@@ -13,9 +13,47 @@ async function loadMatrix() {
         if (data.watchdog) {
             updateWatchdogHeader(data.watchdog);
         }
+        if (data.plants || data.divisions) {
+            updateDropdownOptions(data.plants, data.divisions);
+        }
         renderTopology(currentMatrix);
     } catch (err) {
         console.error("Failed to load matrix:", err);
+    }
+}
+
+function updateDropdownOptions(plants, divisions) {
+    if (plants) {
+        ['sel-plant', 'edit-sel-plant'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const curVal = el.value;
+            let html = '';
+            for (const [pId, pInfo] of Object.entries(plants)) {
+                const pName = (pInfo && pInfo.name) ? pInfo.name : `Plant ${pId}`;
+                html += `<option value="${pId}">${pName}</option>`;
+            }
+            if (html) el.innerHTML = html;
+            if (curVal && el.querySelector(`option[value="${curVal}"]`)) {
+                el.value = curVal;
+            }
+        });
+    }
+
+    if (divisions) {
+        ['sel-div', 'edit-sel-div'].forEach(id => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const curVal = el.value;
+            let html = '';
+            for (const [dId, dName] of Object.entries(divisions)) {
+                html += `<option value="${dId}">${dName} (${dId})</option>`;
+            }
+            if (html) el.innerHTML = html;
+            if (curVal && el.querySelector(`option[value="${curVal}"]`)) {
+                el.value = curVal;
+            }
+        });
     }
 }
 
