@@ -81,6 +81,9 @@ pkill -9 -f "fuxa/server/main.js" 2>/dev/null || true
 sleep 1
 
 mkdir -p "$SCRIPT_DIR/instances" 2>/dev/null || true
+if [ -n "$SUDO_USER" ]; then
+    chown -R "$SUDO_USER:$SUDO_USER" "$SCRIPT_DIR/instances" 2>/dev/null || true
+fi
 chmod -R a+rw "$SCRIPT_DIR/instances" 2>/dev/null || true
 
 if [ ! -d "$SCRIPT_DIR/fuxa/server/node_modules" ]; then

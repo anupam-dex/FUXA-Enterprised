@@ -15,6 +15,7 @@ import shutil
 import asyncio
 import psutil
 import subprocess
+import sqlite3
 import logging
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -557,16 +558,21 @@ def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: s
         pass
 
     # Ensure common resources folder with TVS logo is provisioned in work_dir
-    common_img_dir = os.path.join(work_dir, "_images", "Common")
-    os.makedirs(common_img_dir, exist_ok=True)
-    src_common = os.path.join(BASE_DIR, "fuxa", "server", "_images", "Common")
-    if os.path.exists(src_common):
-        for item in os.listdir(src_common):
-            s = os.path.join(src_common, item)
-            d = os.path.join(common_img_dir, item)
-            if os.path.isfile(s):
-                import shutil
-                shutil.copy2(s, d)
+    try:
+        common_img_dir = os.path.join(work_dir, "_images", "Common")
+        os.makedirs(common_img_dir, exist_ok=True)
+        src_common = os.path.join(BASE_DIR, "fuxa", "server", "_images", "Common")
+        if os.path.exists(src_common):
+            for item in os.listdir(src_common):
+                s = os.path.join(src_common, item)
+                d = os.path.join(common_img_dir, item)
+                if os.path.isfile(s) and (not os.path.exists(d) or os.access(d, os.W_OK)):
+                    try:
+                        shutil.copy2(s, d)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
 
     env = os.environ.copy()
     env["BASE_PATH"] = subpath
