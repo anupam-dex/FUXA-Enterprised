@@ -8,6 +8,16 @@ set -e
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
+# Ensure standard system paths and user nvm paths are available in systemd/boot environments
+export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin:$PATH"
+for nvm_candidate in "$HOME/.nvm" "/home/aiml/.nvm" "/root/.nvm"; do
+    if [ -s "$nvm_candidate/nvm.sh" ]; then
+        export NVM_DIR="$nvm_candidate"
+        \. "$nvm_candidate/nvm.sh" 2>/dev/null || true
+        break
+    fi
+done
+
 # Pre-flight check: Verify Node.js version (Requires Node.js 18+ or 20+ LTS)
 if ! command -v node &>/dev/null; then
     echo "❌ ERROR: Node.js is not installed."
@@ -141,7 +151,10 @@ echo "==========================================================================
 if [ "$1" = "--daemon" ] || [ "$1" = "-d" ] || [ "$1" = "--no-logs" ]; then
     echo "Running in daemon background mode. Logs directed to *.log files."
     trap "kill $BRIDGE_PID $MANAGER_PID $GATEWAY_PID 2>/dev/null || true; exit 0" INT TERM
-    wait
+    wait -n $BRIDGE_PID $MANAGER_PID $GATEWAY_PID
+    echo "Notice: A core process exited. Cleaning up remaining processes..."
+    kill $BRIDGE_PID $MANAGER_PID $GATEWAY_PID 2>/dev/null || true
+    exit 1
 else
     echo "⚡ Live SCADA Terminal Stream Active (Streaming Errors, Warnings & Routing):"
     echo "   (Press Ctrl+C to stop all services)"
