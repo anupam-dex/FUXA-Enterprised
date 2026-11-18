@@ -394,17 +394,46 @@ def generate_fuxa_database(
                 import shutil
                 shutil.copy2(s, d)
 
+    try:
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
     # Mirror database into _appdata/ where FUXA server reads it
+    appdata_dir = os.path.join(target_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+    dest = os.path.join(appdata_dir, "project.fuxap.db")
     try:
-        appdata_dir = os.path.join(target_dir, "_appdata")
-        os.makedirs(appdata_dir, exist_ok=True)
-        dest = os.path.join(appdata_dir, "project.fuxap.db")
-        import shutil
-        shutil.copyfile(db_path, dest)
+        if os.path.abspath(db_path) != os.path.abspath(dest):
+            import shutil
+            shutil.copyfile(db_path, dest)
     except Exception as e:
+        pass
+
+    # Clean lock files
+    for p in [db_path, dest]:
+        for sfx in ["-wal", "-shm", "-journal"]:
+            f = p + sfx
+            if os.path.exists(f):
+                try: os.remove(f)
+                except Exception: pass
+
+    # Provision mysettings.json with hideEditorOnboarding: true
+    settings_file = os.path.join(appdata_dir, "mysettings.json")
+    try:
+        s_data = {}
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f:
+                s_data = json.load(f)
+        s_data["hideEditorOnboarding"] = True
+        if "language" not in s_data: s_data["language"] = "en"
+        if "secureEnabled" not in s_data: s_data["secureEnabled"] = False
+        with open(settings_file, "w") as f:
+            json.dump(s_data, f, indent=2)
+    except Exception:
         pass
 
     return db_path
@@ -548,17 +577,46 @@ def sync_tags_to_view_database(target_dir: str, plant_id: int, base_dir: str = N
     except Exception as e:
         print(f"Warning during DB integrity check: {e}")
 
+    try:
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
     # Mirror database into _appdata/ where FUXA server reads it
+    appdata_dir = os.path.join(target_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+    dest = os.path.join(appdata_dir, "project.fuxap.db")
     try:
-        appdata_dir = os.path.join(target_dir, "_appdata")
-        os.makedirs(appdata_dir, exist_ok=True)
-        dest = os.path.join(appdata_dir, "project.fuxap.db")
-        import shutil
-        shutil.copyfile(db_path, dest)
+        if os.path.abspath(db_path) != os.path.abspath(dest):
+            import shutil
+            shutil.copyfile(db_path, dest)
     except Exception as e:
+        pass
+
+    # Clean lock files
+    for p in [db_path, dest]:
+        for sfx in ["-wal", "-shm", "-journal"]:
+            f = p + sfx
+            if os.path.exists(f):
+                try: os.remove(f)
+                except Exception: pass
+
+    # Provision mysettings.json with hideEditorOnboarding: true
+    settings_file = os.path.join(appdata_dir, "mysettings.json")
+    try:
+        s_data = {}
+        if os.path.exists(settings_file):
+            with open(settings_file, "r") as f:
+                s_data = json.load(f)
+        s_data["hideEditorOnboarding"] = True
+        if "language" not in s_data: s_data["language"] = "en"
+        if "secureEnabled" not in s_data: s_data["secureEnabled"] = False
+        with open(settings_file, "w") as f:
+            json.dump(s_data, f, indent=2)
+    except Exception:
         pass
 
     return all_tags

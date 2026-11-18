@@ -461,6 +461,18 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
     if not keep_existing:
         print("[*] Clearing existing views in target database...")
         cur.execute("DELETE FROM views;")
+    else:
+        # If target has dummy auto-generated 'view_overview' with 0 items, clean it so real imported views take precedence
+        cur.execute("SELECT name, value FROM views WHERE name = 'view_overview';")
+        vo_row = cur.fetchone()
+        if vo_row:
+            try:
+                vo_data = json.loads(vo_row[1])
+                if not vo_data.get("items") or len(vo_data.get("items", {})) == 0:
+                    cur.execute("DELETE FROM views WHERE name = 'view_overview';")
+                    print("    ✓ Replaced empty placeholder 'view_overview' with real imported views")
+            except Exception:
+                pass
 
     for v in remapped_views:
         v_id = v.get("id")
@@ -479,7 +491,9 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
         cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("charts", json.dumps(src_project["charts"])))
         print("    ✓ Imported chart configuration")
 
-    # 6. Update layout navigation so all views have navigation buttons
+    # 6. Extract source layout & preserve user's start view and navigation
+    src_layout = src_hmi.get("layout") or src_project.get("layout") or {}
+
     cur.execute("SELECT value FROM general WHERE name='layout';")
     row = cur.fetchone()
     layout = {}
@@ -489,52 +503,109 @@ def migrate(source: str, target: str, dry_run: bool = False, keep_existing: bool
         except Exception:
             pass
 
-    if not layout:
-        layout = {
-            "start": remapped_views[0]["id"] if remapped_views else "view_overview",
-            "navigation": {"mode": "over", "type": "inline", "items": []}
-        }
+    # Merge source layout settings (theme, header, zoom, inputdialog) into layout
+    for k in ("theme", "zoom", "header", "inputdialog", "showdev"):
+        if k in src_layout and src_layout[k] is not None:
+            layout[k] = src_layout[k]
 
-    nav = layout.get("navigation", {})
-    nav["mode"] = "over"
-    existing_items = nav.get("items", [])
-    existing_view_ids = {it.get("view") for it in existing_items if isinstance(it, dict)}
+    # Determine start view - ALWAYS point to real imported view, never a dummy view
+    imported_view_ids = [v.get("id") for v in remapped_views if v.get("id")]
+    src_start = src_layout.get("start")
+    if src_start and src_start in imported_view_ids:
+        start_view = src_start
+    elif imported_view_ids:
+        start_view = imported_view_ids[0]
+    else:
+        start_view = "view_overview"
+
+    layout["start"] = start_view
+
+    # Configure Navigation
+    nav = layout.get("navigation") or {}
+    if "mode" not in nav or nav.get("mode") == "fix":
+        nav["mode"] = src_layout.get("navigation", {}).get("mode", "over")
+    if "type" not in nav:
+        nav["type"] = src_layout.get("navigation", {}).get("type", "inline")
+
+    # Merge navigation items
+    src_nav_items = src_layout.get("navigation", {}).get("items", [])
+    merged_items = []
+    seen_view_ids = set()
+
+    for it in src_nav_items:
+        if isinstance(it, dict) and it.get("view") in imported_view_ids:
+            merged_items.append(it)
+            seen_view_ids.add(it["view"])
 
     colors = ["#1e293b", "#0f172a", "#1e1b4b", "#172554", "#064e3b"]
     for idx, v in enumerate(remapped_views):
         v_id = v.get("id")
-        if v_id not in existing_view_ids:
-            existing_items.append({
+        if v_id and v_id not in seen_view_ids:
+            merged_items.append({
                 "view": v_id,
                 "text": v.get("name", f"Page {idx+1}"),
                 "icon": "dashboard",
                 "bkcolor": colors[idx % len(colors)],
                 "fgcolor": "#ffffff"
             })
-            existing_view_ids.add(v_id)
+            seen_view_ids.add(v_id)
 
-    nav["items"] = existing_items
+    nav["items"] = merged_items
     layout["navigation"] = nav
-    if not layout.get("start") and remapped_views:
-        layout["start"] = remapped_views[0]["id"]
 
     cur.execute("INSERT OR REPLACE INTO general (name, value) VALUES (?, ?);", ("layout", json.dumps(layout)))
+
+    try:
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
     print("[+] Database committed successfully.")
 
     # Mirror to runtime _appdata/ where FUXA server reads it
+    appdata_dir = os.path.join(work_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+    dest_db = os.path.join(appdata_dir, "project.fuxap.db")
     try:
-        appdata_dir = os.path.join(work_dir, "_appdata")
-        os.makedirs(appdata_dir, exist_ok=True)
-        dest_db = os.path.join(appdata_dir, "project.fuxap.db")
         if os.path.abspath(db_path) != os.path.abspath(dest_db):
             import shutil
             shutil.copy2(db_path, dest_db)
             print(f"[+] Mirrored database to FUXA runtime path: {dest_db}")
     except Exception as e:
         print(f"[*] Note: Could not mirror to _appdata: {e}")
+
+    # Remove all stale WAL lock / journal files so FUXA restarts cleanly with updated database
+    for p in [db_path, dest_db]:
+        for sfx in ["-wal", "-shm", "-journal"]:
+            f = p + sfx
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+
+    # Ensure mysettings.json is provisioned with hideEditorOnboarding: true so onboarding wizard never pops up
+    settings_file = os.path.join(appdata_dir, "mysettings.json")
+    cur_settings = {}
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file, "r") as f:
+                cur_settings = json.load(f)
+        except Exception:
+            pass
+    cur_settings["hideEditorOnboarding"] = True
+    if "language" not in cur_settings:
+        cur_settings["language"] = "en"
+    if "secureEnabled" not in cur_settings:
+        cur_settings["secureEnabled"] = False
+    try:
+        with open(settings_file, "w") as f:
+            json.dump(cur_settings, f, indent=2)
+    except Exception:
+        pass
 
     # 7. Request View Server reload via Fleet Manager
     try:

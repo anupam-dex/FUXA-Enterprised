@@ -3819,7 +3819,8 @@
                     for (let j = 0; j < mutations[i].addedNodes.length; j++) {
                         const node = mutations[i].addedNodes[j];
                         if (node.nodeType === 1) {
-                            if (node.tagName === 'APP-SECTION-MESSAGE-DIALOG' || node.querySelector?.('app-section-message-dialog')) {
+                            if (node.tagName === 'APP-SECTION-MESSAGE-DIALOG' || node.querySelector?.('app-section-message-dialog') ||
+                                node.tagName === 'APP-ONBOARDING-WIZARD' || node.querySelector?.('app-onboarding-wizard')) {
                                 const pane = node.closest('.cdk-overlay-pane') || node;
                                 pane.remove();
                                 const backdrop = document.querySelector('.cdk-overlay-backdrop');

@@ -131,7 +131,13 @@ async def process_watchdog_loop():
                     if not port:
                         continue
                     if not port_engine.is_port_in_use(port):
-                        work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+                        canonical_work_dir = os.path.abspath(os.path.join(INSTANCES_DIR, f"port_{port}"))
+                        stored_work_dir = inst.get("work_dir")
+                        if not stored_work_dir or not os.path.exists(stored_work_dir) or "FUXA-Enterprised-master" in str(stored_work_dir):
+                            work_dir = canonical_work_dir
+                            inst["work_dir"] = canonical_work_dir
+                        else:
+                            work_dir = stored_work_dir
                         diag = diagnose_instance_fault(inst_id, port, work_dir, expected_running=True)
                         logger.warning(f"[WATCHDOG] View Server '{inst.get('name', inst_id)}' (: {port}) down! Fault: {diag.get('fault_summary')}. Details: {diag.get('fault_details')}")
                         
@@ -239,7 +245,13 @@ async def on_startup():
             continue
         started_ports.add(port)
 
-        work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+        canonical_work_dir = os.path.abspath(os.path.join(INSTANCES_DIR, f"port_{port}"))
+        stored_work_dir = inst.get("work_dir")
+        if not stored_work_dir or not os.path.exists(stored_work_dir) or "FUXA-Enterprised-master" in str(stored_work_dir):
+            work_dir = canonical_work_dir
+            inst["work_dir"] = canonical_work_dir
+        else:
+            work_dir = stored_work_dir
         subpath = inst.get("subpath") or f"/p{inst.get('plant', 9)}/div{inst.get('division', 1)}/l{inst.get('line', 1)}"
         plant_id = inst.get("plant", 9)
 
@@ -506,16 +518,40 @@ def _launch_fuxa_instance(instance_id: str, port: int, work_dir: str, subpath: s
             record_watchdog_event(instance_id, fault_msg, "STARTUP_BLOCKED")
             return None
 
-    # 2. Pre-flight check: Clean stale DB lock files
-    db_path = os.path.join(work_dir, "project.fuxap.db")
-    for lock_suffix in ["-journal", "-wal", "-shm"]:
-        lf = db_path + lock_suffix
-        if os.path.exists(lf):
-            try:
-                os.remove(lf)
-                logger.info(f"Cleaned stale lock file: {os.path.basename(lf)}")
-            except Exception:
-                pass
+    # 2. Pre-flight check: Clean stale DB lock files across both root and _appdata runtime paths
+    for base_p in [work_dir, os.path.join(work_dir, "_appdata")]:
+        db_p = os.path.join(base_p, "project.fuxap.db")
+        for lock_suffix in ["-journal", "-wal", "-shm"]:
+            lf = db_p + lock_suffix
+            if os.path.exists(lf):
+                try:
+                    os.remove(lf)
+                    logger.info(f"Cleaned stale lock file: {os.path.basename(lf)}")
+                except Exception:
+                    pass
+
+    # Ensure mysettings.json is provisioned with hideEditorOnboarding: true so onboarding wizard never pops up
+    appdata_dir = os.path.join(work_dir, "_appdata")
+    os.makedirs(appdata_dir, exist_ok=True)
+    settings_file = os.path.join(appdata_dir, "mysettings.json")
+    cur_settings = {}
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file, "r") as f:
+                cur_settings = json.load(f)
+        except Exception:
+            pass
+    if not cur_settings.get("hideEditorOnboarding"):
+        cur_settings["hideEditorOnboarding"] = True
+        if "language" not in cur_settings:
+            cur_settings["language"] = "en"
+        if "secureEnabled" not in cur_settings:
+            cur_settings["secureEnabled"] = False
+        try:
+            with open(settings_file, "w") as f:
+                json.dump(cur_settings, f, indent=2)
+        except Exception:
+            pass
 
     # Ensure common resources folder with TVS logo is provisioned in work_dir
     common_img_dir = os.path.join(work_dir, "_images", "Common")
@@ -988,6 +1024,7 @@ def sync_instance_tags(instance_id: str):
         pid = _launch_fuxa_instance(instance_id, port, work_dir, subpath)
         inst["pid"] = pid
         inst["status"] = "RUNNING" if pid else "STOPPED"
+        inst["user_stopped"] = False
 
     port_engine.register_instance(instance_id, inst)
     return {
@@ -1009,7 +1046,13 @@ def sync_all_tags():
     for inst_id, inst in list(instances.items()):
         port = inst.get("port")
         plant_id = inst.get("plant", 9)
-        work_dir = inst.get("work_dir") or os.path.join(INSTANCES_DIR, f"port_{port}")
+        canonical_work_dir = os.path.abspath(os.path.join(INSTANCES_DIR, f"port_{port}"))
+        stored_work_dir = inst.get("work_dir")
+        if not stored_work_dir or not os.path.exists(stored_work_dir) or "FUXA-Enterprised-master" in str(stored_work_dir):
+            work_dir = canonical_work_dir
+            inst["work_dir"] = canonical_work_dir
+        else:
+            work_dir = stored_work_dir
 
         try:
             synced_tags = sync_tags_to_view_database(work_dir, plant_id, base_dir=BASE_DIR)
@@ -1023,6 +1066,7 @@ def sync_all_tags():
                 pid = _launch_fuxa_instance(inst_id, port, work_dir, subpath)
                 inst["pid"] = pid
                 inst["status"] = "RUNNING" if pid else "STOPPED"
+                inst["user_stopped"] = False
 
             port_engine.register_instance(inst_id, inst)
             synced_list.append({"instance_id": inst_id, "port": port, "plant": plant_id, "tag_count": tag_count})
